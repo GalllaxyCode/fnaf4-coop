@@ -1,0 +1,6 @@
+; Put this file next to the game's exe with winmm.dll.
+; role: host, client or off. The host needs one player to be reachable on the port below.
+[coop]
+role=off
+host=
+port=47114

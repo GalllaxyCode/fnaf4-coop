@@ -1,0 +1,7 @@
+dist/
+tools/dump/bin/
+tools/dump/obj/
+*.log
+*.exe
+fnaf4coop.ini
+.DS_Store
