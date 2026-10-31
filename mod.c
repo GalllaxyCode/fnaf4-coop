@@ -50,7 +50,7 @@ static bool in_room, click_taken;
 static uint32_t join_started_ms, last_announce_ms;
 static struct { uint32_t address, mask; } adapters[MAX_ADAPTERS];
 static int adapter_count;
-static WNDPROC game_proc_next;
+static HHOOK message_hook_handle;
 static char cfg_ini[MAX_PATH], cfg_role[16], cfg_host[128];
 static int cfg_port, cfg_test_mode, cfg_test_skip_title, cfg_test_kill;
 static uint32_t last_tick;
@@ -388,19 +388,26 @@ static void script_run(uint32_t elapsed, bool on_title) {
             logline("shot %s", overlay_save(path) ? "saved" : "failed");
         }
         else if (strcmp(s->command, "click") == 0) {
-            /* Goes through the window's real message path, value is x*10000+y in view coordinates. */
+            /* A hardware-level click, so it is routed the way a real mouse click is. */
             RECT r;
             HWND w = overlay_game_window();
             if (w && GetClientRect(w, &r)) {
-                LPARAM at_pos = MAKELPARAM((s->value / 10000) * r.right / 1024, (s->value % 10000) * r.bottom / 768);
-                PostMessageW(w, WM_MOUSEMOVE, 0, at_pos);
-                PostMessageW(w, WM_LBUTTONDOWN, MK_LBUTTON, at_pos);
-                PostMessageW(w, WM_LBUTTONUP, 0, at_pos);
+                POINT at = {(s->value / 10000) * r.right / 1024, (s->value % 10000) * r.bottom / 768};
+                ClientToScreen(w, &at);
+                DWORD ax = (DWORD)(at.x * 65535 / (GetSystemMetrics(SM_CXSCREEN) - 1)), ay = (DWORD)(at.y * 65535 / (GetSystemMetrics(SM_CYSCREEN) - 1));
+                mouse_event(MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE, ax, ay, 0, 0);
+                mouse_event(MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_ABSOLUTE, ax, ay, 0, 0);
+                mouse_event(MOUSEEVENTF_LEFTUP | MOUSEEVENTF_ABSOLUTE, ax, ay, 0, 0);
             }
         }
         else if (strcmp(s->command, "text") == 0) {
             HWND w = overlay_game_window();
             for (const char *c = s->text; *c; c++) PostMessageW(w, WM_CHAR, (WPARAM)(unsigned char)*c, 0);
+        }
+        else if (strcmp(s->command, "kbd") == 0) {
+            /* A hardware-level key press, so typing is tested the way a keyboard produces it. */
+            keybd_event((BYTE)s->value, 0, 0, 0);
+            keybd_event((BYTE)s->value, 0, KEYEVENTF_KEYUP, 0);
         }
         else if (strcmp(s->command, "vk") == 0) {
             HWND w = overlay_game_window();
@@ -490,6 +497,8 @@ static void test_tick(uint32_t now, const Local *l, const Output *o, uint32_t le
     if (in_room) log_state(now, l, o);
 }
 
+static void poll_mouse(void);
+
 static void coop_tick(uint32_t now) {
     static int last_frame = -1;
     static uint32_t level_ms;
@@ -547,6 +556,7 @@ static void coop_tick(uint32_t now) {
         find_rooms(now);
     }
 
+    if (l.frame == FRAME_TITLE) poll_mouse();
     memset(&scene, 0, sizeof scene);
     if (in_room) rules_scene(&o, &l, now, &scene);
     if (l.frame == FRAME_TITLE) menu_draw(&menu, &lobby, now, &scene);
@@ -556,59 +566,108 @@ static void coop_tick(uint32_t now) {
     if (cfg_test_mode) test_tick(now, &l, &o, level_ms);
 }
 
-/* Runs ahead of the game's own window handling, so the panel gets clicks and typing first. */
-static LRESULT CALLBACK game_proc(HWND h, UINT msg, WPARAM w, LPARAM lp) {
+static void view_from_screen(POINT at, int *x, int *y) {
+    RECT r;
+    HWND game = overlay_game_window();
+    *x = *y = -1;
+    if (!game || !ScreenToClient(game, &at) || !GetClientRect(game, &r) || r.right <= 0 || r.bottom <= 0) return;
+    *x = at.x * 1024 / r.right;
+    *y = at.y * 768 / r.bottom;
+}
+
+/* A click can arrive twice, once as a message and once from polling the button. */
+static bool menu_press(int x, int y, const char *source) {
+    static uint32_t last_ms;
+    static bool last_taken;
+    static int logged;
+    uint32_t now = real_timeGetTime();
+    if (now - last_ms < 200) return last_taken;
+    last_ms = now;
     MenuAction action = ACTION_NONE;
-    if (game_frame() == FRAME_TITLE) {
-        bool blocked = game_input_blocked();
-        RECT r;
-        int x = 0, y = 0;
-        if (GetClientRect(h, &r) && r.right > 0 && r.bottom > 0) {
-            x = (short)LOWORD(lp) * 1024 / r.right;
-            y = (short)HIWORD(lp) * 768 / r.bottom;
+    last_taken = menu_click(&menu, &lobby, x, y, &action);
+    if (logged++ < 16) logline("click at %d,%d by %s: %s", x, y, source, last_taken ? "menu" : "game");
+    if (last_taken) run_action(action);
+    return last_taken;
+}
+
+/* Returns true when the message belongs to the panel and the game must not see it. */
+static bool menu_message(const MSG *m) {
+    MenuAction action = ACTION_NONE;
+    int x, y;
+    if (game_frame() != FRAME_TITLE) return false;
+    bool blocked = game_input_blocked();
+    switch (m->message) {
+    case WM_MOUSEMOVE:
+        return blocked;
+    case WM_LBUTTONDOWN:
+    case WM_LBUTTONDBLCLK:
+        view_from_screen(m->pt, &x, &y);
+        if (menu_press(x, y, "message")) {
+            click_taken = true;
+            return true;
         }
-        switch (msg) {
-        case WM_MOUSEMOVE:
-            menu_mouse(&menu, x, y);
-            if (blocked) return 0;
-            break;
-        case WM_LBUTTONDOWN:
-            if (menu_click(&menu, &lobby, x, y, &action)) {
-                click_taken = true;
-                run_action(action);
-                return 0;
-            }
-            if (blocked) return 0;
-            break;
-        case WM_LBUTTONUP:
-            if (click_taken || blocked) {
-                click_taken = false;
-                return 0;
-            }
-            break;
-        case WM_CHAR:
-            if (menu.open) {
-                menu_char(&menu, (int)w, &action);
-                run_action(action);
-                return 0;
-            }
-            if (blocked) return 0;
-            break;
-        case WM_KEYDOWN:
-            if (menu.open && w == VK_ESCAPE) {
-                menu_escape(&menu, &action);
-                run_action(action);
-                return 0;
-            }
-            if (blocked) return 0;
-            break;
-        case WM_KEYUP:
-            if (blocked) return 0;
-            break;
-        default: break;
+        return blocked;
+    case WM_LBUTTONUP:
+        if (click_taken || blocked) {
+            click_taken = false;
+            return true;
         }
+        return false;
+    case WM_CHAR:
+        if (menu.open) {
+            menu_char(&menu, (int)m->wParam, &action);
+            run_action(action);
+            return true;
+        }
+        return blocked;
+    case WM_KEYDOWN:
+        if (menu.open && m->wParam == VK_ESCAPE) {
+            menu_escape(&menu, &action);
+            run_action(action);
+            return true;
+        }
+        /* The game never sees this message, so the character has to be made here. */
+        if (menu.open) TranslateMessage(m);
+        return blocked;
+    case WM_KEYUP:
+        return blocked;
+    default:
+        return false;
     }
-    return CallWindowProcW(game_proc_next, h, msg, w, lp);
+}
+
+/* Sees every message for the game's thread, whichever of its windows the message is aimed at. */
+static LRESULT CALLBACK message_hook(int code, WPARAM removing, LPARAM lp) {
+    if (code == HC_ACTION && removing == PM_REMOVE) {
+        MSG *m = (MSG *)lp;
+        if (menu_message(m)) m->message = WM_NULL;
+    }
+    return CallNextHookEx(NULL, code, removing, lp);
+}
+
+/* Polling keeps the button alive even if a window takes the click before the queue shows it. */
+static void poll_mouse(void) {
+    static bool was_down;
+    POINT at;
+    int x, y;
+    bool down = key_real(VK_LBUTTON);
+    if (GetCursorPos(&at)) {
+        view_from_screen(at, &x, &y);
+        menu_mouse(&menu, x, y);
+        if (down && !was_down) menu_press(x, y, "polling");
+    }
+    was_down = down;
+}
+
+static BOOL CALLBACK log_child(HWND h, LPARAM depth) {
+    wchar_t cls[48];
+    char text[48];
+    RECT r;
+    GetClassNameW(h, cls, 48);
+    WideCharToMultiByte(CP_ACP, 0, cls, -1, text, sizeof text, NULL, NULL);
+    GetClientRect(h, &r);
+    logline("%s window %s %ldx%ld", (const char *)depth, text, r.right, r.bottom);
+    return TRUE;
 }
 
 __attribute__((used)) DWORD coop_timeGetTime(void) {
@@ -626,9 +685,11 @@ __attribute__((used)) DWORD coop_timeGetTime(void) {
         if (strcmp(cfg_role, "host") == 0) room_host();
         else if (strcmp(cfg_role, "client") == 0 && cfg_host[0]) room_join_address(cfg_host);
     }
-    if (!game_proc_next && overlay_game_window()) {
-        game_proc_next = (WNDPROC)SetWindowLongPtrW(overlay_game_window(), GWLP_WNDPROC, (LONG_PTR)game_proc);
-        logline("window hook on");
+    if (!message_hook_handle && overlay_game_window()) {
+        message_hook_handle = SetWindowsHookExW(WH_GETMESSAGE, message_hook, NULL, GetCurrentThreadId());
+        logline("message hook %s", message_hook_handle ? "on" : "failed");
+        log_child(overlay_game_window(), (LPARAM)"main");
+        EnumChildWindows(overlay_game_window(), log_child, (LPARAM)"child");
     }
     if (now - last_tick >= TICK_MS) {
         last_tick = now;

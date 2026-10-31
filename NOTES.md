@@ -122,8 +122,10 @@ Last updated 2026-10-31.
   the host into a night. Leaving a room left a later solo night with co-op rules off.
 - Loading a night blocks the main thread for about 10 s, so no packets flow. A 5 s lost-host limit
   kicked a client during a load, the limit is now 25 s plus an explicit goodbye packet.
-- The title screen reads the real cursor and key state, so posted window messages reach the panel
-  but not New Game or Continue. Bots use the runtime's next-frame exit there.
+- The game draws in a child window (Mf2EditClassTh) that fills the main window (Mf2MainClassTh), so
+  subclassing the main window misses real clicks. A WH_GETMESSAGE hook sees them all. Keys swallowed
+  there need TranslateMessage first, or WM_CHAR is never made. Test scripts now use mouse_event and
+  keybd_event, because posted messages skip this routing.
 - GetAdaptersInfo works under this Wine, given a large enough buffer.
 
 ## Derived
@@ -146,7 +148,7 @@ Last updated 2026-10-31.
 - Whether the overlay looks right on screen. Its pixels were checked in in-process captures only.
 - Two machines, or more than two real copies. macOS Local Network permission may block discovery
   between machines, and one Mac can't show that.
-- Real clicks through the overlay window to the game. Bots post messages directly to the game.
+- Real macOS clicks. Injected hardware events go through Wine's routing but skip macOS itself.
 - Play by a human with real mouse and keyboard. All real-game runs were test scripts.
 - In the real game, not yet run: flashlight scares (EV_SCARE_*), closet hold, remote bed view,
   remote listening, Foxy's closet run from a remote side, the BB minigame, Nights 5 and 6.

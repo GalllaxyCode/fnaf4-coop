@@ -21,7 +21,7 @@ This is an early build. It has been played by test bots, not yet by people, so e
 
 ## Download
 
-Get `fnaf4-coop-*.zip` from [Releases](../../releases/latest). Every player needs the same release. The game is not included, you need your own copy on Steam.
+Get `fnaf4-coop-*.zip` from [Releases](../../releases). Every player needs the same release. The game is not included, you need your own copy on Steam.
 
 ## Install
 
