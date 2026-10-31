@@ -13,11 +13,15 @@ start() {
       WINEDEBUG=-all WINEMSYNC=1 ROSETTA_ADVERTISE_AVX=1 WINEDLLOVERRIDES='winmm=n,b' \
       nohup "$R/bin/wine" FiveNightsatFreddys4.exe > ../wine.log 2>&1 & )
 }
-printf '[coop]\nrole=host\nhost=\nport=47114\n[test]\ntest_mode=1\nskip_title_ms=3000\n%b\n' "$2" > test-a/game/fnaf4coop.ini
-printf '[coop]\nrole=client\nhost=127.0.0.1\nport=47114\n[test]\ntest_mode=1\nskip_title_ms=3000\n%b\n' "$3" > test-b/game/fnaf4coop.ini
+M=drive_c/users/crossover/AppData/Roaming/MMFApplications
+for t in a b; do rm -rf "test-$t/prefix/$M"; cp -cR ~/Games/GPTK-Prefix-Experimental/$M "test-$t/prefix/$M"; done
+# HOST_NIGHT puts only the host's save on that night, to prove the client follows it.
+if [ -n "${HOST_NIGHT-}" ]; then perl -pi -e "s/night=\\d+/night=$HOST_NIGHT/" "test-a/prefix/$M/fn4"; fi
+printf "[coop]\nrole=${HOST_ROLE-host}\nname=${HOST_NAME-Host}\nhost=\nport=47114\n[test]\ntest_mode=1\nskip_title_ms=${SKIP_TITLE-3000}\n%b\n" "$2" > test-a/game/fnaf4coop.ini
+printf "[coop]\nrole=${CLIENT_ROLE-client}\nname=${CLIENT_NAME-Guest}\nhost=127.0.0.1\nport=47114\n[test]\ntest_mode=1\n%b\n" "$3" > test-b/game/fnaf4coop.ini
 start a
 perl -e 'select(undef,undef,undef,2)'
 start b
 end=$((SECONDS + seconds))
 while [ $SECONDS -lt $end ]; do perl -e 'select(undef,undef,undef,1)'; done
-for t in a b; do print "=== $t"; grep -vE 'object |frame has' "test-$t/game/fnaf4coop.log" | cut -c1-80; done
+for t in a b; do print "=== $t"; cut -c1-130 "test-$t/game/fnaf4coop.log"; done

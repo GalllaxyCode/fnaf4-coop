@@ -1,6 +1,6 @@
 # Five Nights at Freddy's 4: working notes
 
-Phase reached: 6 (first milestone runs in the game on one Mac, two instances), no claim issue (owner declined), QA level `none`.
+Phase reached: 6 (shared night runs in the game on one Mac, two instances), no claim issue (owner declined), QA level `none`.
 Last updated 2026-10-31.
 
 ## Identity
@@ -101,6 +101,31 @@ Last updated 2026-10-31.
   left the night 2.2 s later (Nights 1 and 3); both restart and relink on the next attempt;
   host at hour 6 sends both to the win frame 275 ms apart; different nights raise the warning.
 
+- Shared night, observed in the real game (two instances, one Mac, test mode):
+  event list walks to exactly 480 groups from CRunFrame+128; evgFlags 0x4000 stops a group;
+  group header 16 bytes, condition 16, action 14. Clients with g-list off keep threats identical
+  to the host (13 of 13 comparable samples over 110 s on Night 4, 8 distinct positions).
+  A client whose save was Night 1 loaded the host's Night 4. Client door hold sets the host's
+  `left door shut`. Host hold drives a client at the peek from AV0 10 to 20 through injected
+  Shift. All 8 scare kinds reach the other player. A natural Freddy kill on the client reached
+  the host. Host Ctrl gives the client `light on`=1 in frame 7, with trap and timer mirrored.
+  Overlay exists as a 1470x956 macOS window above the game.
+- Goto frame: `rhQuit`=3 and `value|0x8000` at RunHeader+0x38, value is the 0-based index.
+  Current frame index is CRunApp+0x1F0. rhQuitParam is not at the SDK's offset.
+- Wine here has no FreeType, so GDI text is empty. The overlay carries its own font.
+- Game windows on another macOS Space return a frozen frame to `screencapture -l`.
+  The mod's `shot` script command saves the window from inside the process instead.
+- Alterable values are not inverted, only counters are.
+
+- Title menu: rooms announce on UDP 47115. A client found and joined a room at the Mac's real
+  address, both copies on one Mac. A client that joined through the panel followed
+  the host into a night. Leaving a room left a later solo night with co-op rules off.
+- Loading a night blocks the main thread for about 10 s, so no packets flow. A 5 s lost-host limit
+  kicked a client during a load, the limit is now 25 s plus an explicit goodbye packet.
+- The title screen reads the real cursor and key state, so posted window messages reach the panel
+  but not New Game or Continue. Bots use the runtime's next-frame exit there.
+- GetAdaptersInfo works under this Wine, given a large enough buffer.
+
 ## Derived
 
 - The solver's work targets Android builds, so per ground rule 5 nothing from it applies to
@@ -114,23 +139,17 @@ Last updated 2026-10-31.
 
 ## Guesses
 
-- Candidate first milestone: linked nights. Each player runs their own night, the host's
-  `hour` drives everyone and any player's `gameover` ends it for all. Needs two values only.
-- Candidate second milestone: shared night, one host simulation, with animatronics mirrored
-  and a door held by either player counting as shut.
 - A Chowdren rebuild might run natively on macOS and avoid Wine.
 
 ## Unknown
 
-- One run with the host on Night 3 and the client on Night 2: the host was still on the night
-  frame about 7 s after its kill started, when the run ended. Not reproduced with matched saves.
-- Anything over a real network, or on two machines. Only 127.0.0.1 has been tested.
-- More than two players in the real game. The fake-world tests use four.
-- Night 5 and 6 kills, which go through other Fredbear groups.
-- Play by a human, with real inputs. All real-game runs were unattended test mode.
-- If a client's own timer reaches hour 6 before the host's, it wins locally first.
-
-- Whether NebulaFD reads the Steam build. Not run yet.
-- How far the Android logic matches the Steam build.
-- Whether Steam Remote Play Together works for it despite not being listed.
-- GameBanana, ModDB, Nexus, Archive.org and Discord: not searched yet.
+- Whether the overlay looks right on screen. Its pixels were checked in in-process captures only.
+- Two machines, or more than two real copies. macOS Local Network permission may block discovery
+  between machines, and one Mac can't show that.
+- Real clicks through the overlay window to the game. Bots post messages directly to the game.
+- Play by a human with real mouse and keyboard. All real-game runs were test scripts.
+- In the real game, not yet run: flashlight scares (EV_SCARE_*), closet hold, remote bed view,
+  remote listening, Foxy's closet run from a remote side, the BB minigame, Nights 5 and 6.
+- One old run with the host on Night 3 and the client on Night 2 left the host on the night frame
+  about 7 s after its kill started. Not seen since, including on matched Night 3.
+- How far the Android logic matches the Steam build beyond what was read here.

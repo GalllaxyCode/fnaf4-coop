@@ -1,0 +1,11 @@
+FNAF 4 Co-op
+
+You need your own copy of Five Nights at Freddy's 4 on Steam. Every player needs this same release.
+
+1. Put winmm.dll next to FiveNightsatFreddys4.exe.
+2. Launch the game with this environment variable set:
+   WINEDLLOVERRIDES=winmm=n,b
+3. Click CO-OP on the title screen. One player hosts, everyone else clicks the room.
+
+This is an early build. Full setup, including getting the game on a Mac:
+https://github.com/GalllaxyCode/fnaf4-coop

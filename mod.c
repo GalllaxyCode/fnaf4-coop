@@ -1,33 +1,30 @@
 /* winmm.dll proxy for Five Nights at Freddy's 4 (Steam, Fusion build 288).
  * Forwards every winmm export to the system DLL. The game calls timeGetTime from its main loop,
- * which gives a tick on the game thread for linked-nights co-op. See fnaf4coop.ini for setup. */
+ * which gives a tick on the game thread for shared-night co-op. See fnaf4coop.ini for setup. */
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <iphlpapi.h>
 #include <windows.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include "game.h"
+#include "input.h"
+#include "lobby.h"
+#include "menu.h"
+#include "overlay.h"
+#include "rules.h"
 #include "sync.h"
 
-/* Offsets from Clickteam's Cncf.h, confirmed against this exe's code. objInfoList is 146 bytes here,
- * not the header's 142: this runtime has the HWABETA oilColList field at the end. */
 #define EXE_TIMESTAMP 0x58CFD2A9u
-#define RVA_RUNHEADER 0xB39D4u
-#define RH_QUIT 48
-#define RH_NUMBER_OI 84
-#define RH_OI_LIST 88
-#define RH_OBJECT_LIST 0x1278
-#define OIL_SIZE 146
-#define OIL_OBJECT 6
-#define OIL_NAME 90
-#define OBJ_LIST_STRIDE 8
-#define CNT_TYPE 0x202
-#define CNT_VALUE 0x20A
-#define CV_LONG 0
-#define CV_DOUBLE 2
-#define DEATH_FREDDY_COUNTER 80
-#define LOOPEXIT_NEXTLEVEL 1
+#define TICK_MS 50
+#define STATE_LOG_MS 1000
+#define MAX_SCRIPT 32
+#define FRAME_TITLE 1
+#define JOIN_TIMEOUT_MS 6000
+#define MAX_ADAPTERS 8
 
 #define NAME_COUNT (sizeof names / sizeof names[0])
 static const char *const names[] = {
@@ -43,13 +40,20 @@ static bool enabled;
 static bool started;
 static BYTE *exe_base;
 
-static SOCKET sock = INVALID_SOCKET;
+static SOCKET sock = INVALID_SOCKET, finder = INVALID_SOCKET;
 static struct sockaddr_in host_addr;
 static struct sockaddr_in peers[SYNC_MAX_PEERS];
 static Sync sync_state;
-static char cfg_role[16], cfg_host[128];
-static int cfg_port, cfg_test_mode, cfg_test_kill_ms, cfg_test_skip_title, cfg_test_hour_ms, cfg_test_hour;
-static uint32_t last_tick, start_ms, level_start_ms;
+static Menu menu;
+static Lobby lobby;
+static bool in_room, click_taken;
+static uint32_t join_started_ms, last_announce_ms;
+static struct { uint32_t address, mask; } adapters[MAX_ADAPTERS];
+static int adapter_count;
+static WNDPROC game_proc_next;
+static char cfg_ini[MAX_PATH], cfg_role[16], cfg_host[128];
+static int cfg_port, cfg_test_mode, cfg_test_skip_title, cfg_test_kill;
+static uint32_t last_tick;
 
 static void logline(const char *fmt, ...) {
     if (!logf_) return;
@@ -88,87 +92,231 @@ static bool exe_is_supported(void) {
     return nt->FileHeader.TimeDateStamp == EXE_TIMESTAMP;
 }
 
-static BYTE *read_ptr(BYTE *at) {
-    if (IsBadReadPtr(at, sizeof(BYTE *))) return NULL;
-    return *(BYTE **)at;
+static void socket_close(SOCKET *s) {
+    if (*s != INVALID_SOCKET) closesocket(*s);
+    *s = INVALID_SOCKET;
 }
 
-/* Finds a named object's first instance through the frame's object-info list. */
-static BYTE *find_object(BYTE *rh, const wchar_t *name) {
-    int count = *(int *)(rh + RH_NUMBER_OI);
-    BYTE *list = read_ptr(rh + RH_OI_LIST), *objs = read_ptr(rh + RH_OBJECT_LIST);
-    if (!list || !objs || count <= 0 || count > 4096) return NULL;
-    if (IsBadReadPtr(list, (UINT_PTR)count * OIL_SIZE)) return NULL;
-    for (int i = 0; i < count; i++) {
-        BYTE *oil = list + i * OIL_SIZE;
-        if (wcsncmp((const wchar_t *)(oil + OIL_NAME), name, 24) != 0) continue;
-        short first = *(short *)(oil + OIL_OBJECT);
-        if (first < 0) return NULL;
-        return read_ptr(objs + first * OBJ_LIST_STRIDE);
+/* Remembers this machine's network addresses, to show the host's and to reach each network. */
+static void find_adapters(void) {
+    static char buffer[32768];
+    ULONG size = sizeof buffer;
+    DWORD result = GetAdaptersInfo((IP_ADAPTER_INFO *)buffer, &size);
+    adapter_count = 0;
+    if (result != NO_ERROR) {
+        logline("adapter list unavailable: %lu", result);
+        return;
     }
-    return NULL;
+    for (IP_ADAPTER_INFO *a = (IP_ADAPTER_INFO *)buffer; a && adapter_count < MAX_ADAPTERS; a = a->Next) {
+        uint32_t ip = inet_addr(a->IpAddressList.IpAddress.String), mask = inet_addr(a->IpAddressList.IpMask.String);
+        if (ip == 0 || ip == INADDR_NONE || (ntohl(ip) >> 24) == 127) continue;
+        adapters[adapter_count].address = ip;
+        adapters[adapter_count].mask = mask;
+        adapter_count++;
+    }
 }
 
-/* True when the current frame defines the object, even with no instance spawned yet. */
-static bool frame_has_object(BYTE *rh, const wchar_t *name) {
-    int count = *(int *)(rh + RH_NUMBER_OI);
-    BYTE *list = read_ptr(rh + RH_OI_LIST);
-    if (!list || count <= 0 || count > 4096 || IsBadReadPtr(list, (UINT_PTR)count * OIL_SIZE)) return false;
-    for (int i = 0; i < count; i++)
-        if (wcsncmp((const wchar_t *)(list + i * OIL_SIZE + OIL_NAME), name, 24) == 0) return true;
-    return false;
+static const char *best_address(void) {
+    static char text[32];
+    uint32_t best = 0;
+    int best_rank = -1;
+    for (int i = 0; i < adapter_count; i++) {
+        uint32_t ip = ntohl(adapters[i].address);
+        int rank = (ip >> 16) == 0xC0A8 ? 3 : (ip >> 24) == 10 ? 2 : (ip >> 20) == 0xAC1 ? 1 : 0;
+        if (rank > best_rank) {
+            best_rank = rank;
+            best = adapters[i].address;
+        }
+    }
+    struct in_addr a;
+    a.s_addr = best;
+    snprintf(text, sizeof text, "%s", best ? inet_ntoa(a) : "finding...");
+    return text;
 }
 
-static bool counter_read(BYTE *obj, int *out) {
-    if (!obj || IsBadReadPtr(obj + CNT_TYPE, 16)) return false;
-    UINT type = *(UINT *)(obj + CNT_TYPE);
-    /* This runtime stores counters inverted and applies `not` on every read. */
-    if (type == CV_LONG) *out = ~*(int *)(obj + CNT_VALUE);
-    else if (type == CV_DOUBLE) *out = ~(int)*(double *)(obj + CNT_VALUE);
-    else return false;
+static bool net_open(bool bind_port) {
+    u_long nonblocking = 1;
+    BOOL on = TRUE;
+    socket_close(&sock);
+    sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock == INVALID_SOCKET) {
+        logline("socket failed: %d", WSAGetLastError());
+        return false;
+    }
+    ioctlsocket(sock, FIONBIO, &nonblocking);
+    setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (const char *)&on, sizeof on);
+    if (!bind_port) return true;
+    struct sockaddr_in any;
+    memset(&any, 0, sizeof any);
+    any.sin_family = AF_INET;
+    any.sin_port = htons((u_short)cfg_port);
+    if (bind(sock, (struct sockaddr *)&any, sizeof any) != 0) {
+        logline("bind %d failed: %d", cfg_port, WSAGetLastError());
+        socket_close(&sock);
+        return false;
+    }
     return true;
 }
 
-static void counter_write(BYTE *obj, int value) {
-    if (*(UINT *)(obj + CNT_TYPE) == CV_DOUBLE) *(double *)(obj + CNT_VALUE) = ~value;
-    else *(int *)(obj + CNT_VALUE) = ~value;
-}
-
-static void net_start(void) {
-    WSADATA wsa;
-    u_long nonblocking = 1;
-    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) { logline("WSAStartup failed"); return; }
-    sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (sock == INVALID_SOCKET) { logline("socket failed: %d", WSAGetLastError()); return; }
-    ioctlsocket(sock, FIONBIO, &nonblocking);
-    if (sync_state.is_host) {
-        struct sockaddr_in any;
-        memset(&any, 0, sizeof any);
-        any.sin_family = AF_INET;
-        any.sin_port = htons((u_short)cfg_port);
-        if (bind(sock, (struct sockaddr *)&any, sizeof any) != 0) logline("bind %d failed: %d", cfg_port, WSAGetLastError());
-        else logline("hosting on UDP %d", cfg_port);
+static void room_host(void) {
+    memset(peers, 0, sizeof peers);
+    if (!net_open(true)) {
+        menu_set_status(&menu, "Could not open a room on this computer");
         return;
     }
+    sync_init(&sync_state, true, GetTickCount() ^ (GetCurrentProcessId() << 16), menu.name);
+    rules_init(true);
+    find_adapters();
+    in_room = true;
+    menu.room = ROOM_HOSTING;
+    menu.status[0] = 0;
+    menu.player_count = 1;
+    strncpy(menu.my_address, best_address(), LOBBY_ADDRESS_LEN - 1);
+    logline("hosting on UDP %d at %s", cfg_port, menu.my_address);
+}
+
+static void room_join(uint32_t address, int port) {
+    if (!net_open(false)) {
+        menu_set_status(&menu, "Could not open a connection");
+        return;
+    }
+    memset(&host_addr, 0, sizeof host_addr);
+    host_addr.sin_family = AF_INET;
+    host_addr.sin_addr.s_addr = address;
+    host_addr.sin_port = htons((u_short)port);
+    sync_init(&sync_state, false, GetTickCount() ^ (GetCurrentProcessId() << 16), menu.name);
+    rules_init(false);
+    in_room = true;
+    menu.room = ROOM_JOINING;
+    menu.status[0] = 0;
+    menu.player_count = 1;
+    join_started_ms = real_timeGetTime();
+    logline("joining %s port %d", inet_ntoa(host_addr.sin_addr), port);
+}
+
+static void room_join_address(const char *text) {
     struct addrinfo hints, *res = NULL;
     memset(&hints, 0, sizeof hints);
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_DGRAM;
-    if (getaddrinfo(cfg_host, NULL, &hints, &res) != 0 || !res) { logline("cannot resolve %s", cfg_host); return; }
-    memcpy(&host_addr, res->ai_addr, sizeof host_addr);
-    host_addr.sin_port = htons((u_short)cfg_port);
+    if (getaddrinfo(text, NULL, &hints, &res) != 0 || !res) {
+        menu_set_status(&menu, "That address doesn't look right");
+        return;
+    }
+    room_join(((struct sockaddr_in *)res->ai_addr)->sin_addr.s_addr, cfg_port);
     freeaddrinfo(res);
-    logline("joining %s port %d", inet_ntoa(host_addr.sin_addr), cfg_port);
 }
 
-static int peer_slot(const struct sockaddr_in *from) {
+static void net_send(const Packet *p);
+
+static void send_goodbye(void) {
+    Packet p;
+    memset(&p, 0, sizeof p);
+    p.magic = SYNC_MAGIC;
+    p.version = SYNC_VERSION;
+    p.is_host = sync_state.is_host;
+    p.session = sync_state.session;
+    p.seq = ++sync_state.seq;
+    p.frame = -1;
+    p.closing = 1;
+    net_send(&p);
+}
+
+static void room_leave(const char *status) {
+    send_goodbye();
+    socket_close(&sock);
+    in_room = false;
+    menu.room = ROOM_NONE;
+    menu.player_count = 0;
+    menu.players[0] = 0;
+    menu_set_status(&menu, status);
+    key_force(16, false);
+    key_force(17, false);
+    logline("left the room: %s", status[0] ? status : "by choice");
+}
+
+static void run_action(MenuAction action) {
+    const Room *room;
+    switch (action) {
+    case ACTION_HOST: room_host(); break;
+    case ACTION_JOIN_ROOM:
+        room = lobby_room(&lobby, menu.join_index);
+        if (room) room_join(room->address, room->port);
+        break;
+    case ACTION_JOIN_ADDRESS: room_join_address(menu.address); break;
+    case ACTION_LEAVE: room_leave(""); break;
+    case ACTION_NAME_CHANGED: WritePrivateProfileStringA("coop", "name", menu.name, cfg_ini); break;
+    default: break;
+    }
+}
+
+static void announce_room(uint32_t now, int players) {
+    Announce a;
+    struct sockaddr_in to;
+    if (now - last_announce_ms < LOBBY_ANNOUNCE_MS) return;
+    last_announce_ms = now;
+    memset(&a, 0, sizeof a);
+    a.magic = LOBBY_MAGIC;
+    a.version = SYNC_VERSION;
+    a.players = (uint8_t)players;
+    a.port = (uint16_t)cfg_port;
+    a.session = sync_state.session;
+    strncpy(a.name, menu.name, SYNC_NAME_LEN - 1);
+    memset(&to, 0, sizeof to);
+    to.sin_family = AF_INET;
+    to.sin_port = htons(LOBBY_PORT);
+    to.sin_addr.s_addr = INADDR_BROADCAST;
+    sendto(sock, (const char *)&a, sizeof a, 0, (struct sockaddr *)&to, sizeof to);
+    /* The general broadcast can leave through a VPN, so each network also gets its own. */
+    for (int i = 0; i < adapter_count; i++) {
+        to.sin_addr.s_addr = adapters[i].address | ~adapters[i].mask;
+        sendto(sock, (const char *)&a, sizeof a, 0, (struct sockaddr *)&to, sizeof to);
+    }
+}
+
+static void find_rooms(uint32_t now) {
+    Announce a;
+    struct sockaddr_in from;
+    if (finder == INVALID_SOCKET) {
+        u_long nonblocking = 1;
+        BOOL on = TRUE;
+        struct sockaddr_in any;
+        finder = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (finder == INVALID_SOCKET) return;
+        ioctlsocket(finder, FIONBIO, &nonblocking);
+        setsockopt(finder, SOL_SOCKET, SO_REUSEADDR, (const char *)&on, sizeof on);
+        setsockopt(finder, SOL_SOCKET, SO_BROADCAST, (const char *)&on, sizeof on);
+        memset(&any, 0, sizeof any);
+        any.sin_family = AF_INET;
+        any.sin_port = htons(LOBBY_PORT);
+        if (bind(finder, (struct sockaddr *)&any, sizeof any) != 0) logline("cannot listen for rooms: %d", WSAGetLastError());
+    }
+    for (;;) {
+        int len = sizeof from;
+        int n = recvfrom(finder, (char *)&a, sizeof a, 0, (struct sockaddr *)&from, &len);
+        if (n < 0) break;
+        if (n != (int)sizeof a) continue;
+        /* A host hears its own announcement, which is the one reliable source of its Wi-Fi address. */
+        if (a.session == sync_state.session) {
+            if (in_room && sync_state.is_host) snprintf(menu.my_address, LOBBY_ADDRESS_LEN, "%s", inet_ntoa(from.sin_addr));
+            continue;
+        }
+        bool was_empty = lobby_count(&lobby) == 0;
+        if (lobby_note(&lobby, &a, from.sin_addr.s_addr, now) && was_empty) logline("found room %s", a.name);
+    }
+    lobby_expire(&lobby, now);
+}
+
+static int peer_slot(const struct sockaddr_in *from, uint32_t now) {
     int free_slot = -1;
     for (int i = 0; i < SYNC_MAX_PEERS; i++) {
         if (peers[i].sin_port == from->sin_port && peers[i].sin_addr.s_addr == from->sin_addr.s_addr) return i;
-        if (peers[i].sin_port == 0 && free_slot < 0) free_slot = i;
+        bool stale = sync_state.peers[i].used && now - sync_state.peers[i].last_ms >= SYNC_PEER_TIMEOUT_MS;
+        if ((peers[i].sin_port == 0 || stale) && free_slot < 0) free_slot = i;
     }
     if (free_slot >= 0) {
         peers[free_slot] = *from;
+        sync_state.peers[free_slot].used = false;
         logline("player joined from %s", inet_ntoa(from->sin_addr));
     }
     return free_slot;
@@ -177,17 +325,16 @@ static int peer_slot(const struct sockaddr_in *from) {
 static void net_poll(uint32_t now) {
     Packet p;
     struct sockaddr_in from;
-    int len = sizeof from;
     if (sock == INVALID_SOCKET) return;
     for (;;) {
-        len = sizeof from;
+        int len = sizeof from;
         int n = recvfrom(sock, (char *)&p, sizeof p, 0, (struct sockaddr *)&from, &len);
-        if (n != (int)sizeof p) {
-            if (n < 0 && WSAGetLastError() != WSAEWOULDBLOCK && WSAGetLastError() != WSAECONNRESET) break;
-            if (n < 0 && WSAGetLastError() == WSAEWOULDBLOCK) break;
-            continue;
+        if (n < 0) {
+            if (WSAGetLastError() == WSAECONNRESET) continue;
+            break;
         }
-        sync_recv(&sync_state, sync_state.is_host ? peer_slot(&from) : 0, &p, now);
+        if (n != (int)sizeof p) continue;
+        sync_recv(&sync_state, sync_state.is_host ? peer_slot(&from, now) : 0, &p, now);
     }
 }
 
@@ -201,92 +348,267 @@ static void net_send(const Packet *p) {
         if (peers[i].sin_port) sendto(sock, (const char *)p, sizeof *p, 0, (struct sockaddr *)&peers[i], sizeof peers[i]);
 }
 
-/* Logs each frame's object names once, which proves the list offsets on a real run. */
-static void log_frame_objects(BYTE *rh) {
-    static BYTE *seen;
-    BYTE *list = read_ptr(rh + RH_OI_LIST);
-    int count = *(int *)(rh + RH_NUMBER_OI);
-    if (!list || list == seen || count <= 0 || count > 4096 || IsBadReadPtr(list, (UINT_PTR)count * OIL_SIZE)) return;
-    seen = list;
-    logline("frame has %d objects", count);
-    for (int i = 0; i < count && i < 6; i++) {
-        BYTE *oil = list + i * OIL_SIZE;
-        char name[25];
-        WideCharToMultiByte(CP_ACP, 0, (const wchar_t *)(oil + OIL_NAME), 24, name, sizeof name - 1, NULL, NULL);
-        name[24] = 0;
-        logline("  object %d first=%d %s", i, *(short *)(oil + OIL_OBJECT), name);
+typedef struct { uint32_t at; bool on_title; char command[12]; int value; char text[24]; bool done; } ScriptStep;
+static ScriptStep script[MAX_SCRIPT];
+static int script_count;
+
+/* Test only: `script=ms:command=value;...`, timed from the start of each night. */
+static void script_parse(const char *text) {
+    char copy[512];
+    strncpy(copy, text, sizeof copy - 1);
+    copy[sizeof copy - 1] = 0;
+    for (char *item = strtok(copy, ";"); item && script_count < MAX_SCRIPT; item = strtok(NULL, ";")) {
+        ScriptStep *s = &script[script_count];
+        unsigned at;
+        s->on_title = *item == 't';
+        if (s->on_title) item++;
+        char command[12] = "", value[24] = "";
+        if (sscanf(item, "%u:%11[a-z0-9]=%23s", &at, command, value) >= 2) {
+            s->at = at;
+            strcpy(s->command, command);
+            strcpy(s->text, value);
+            s->value = atoi(value);
+            script_count++;
+        }
     }
 }
 
-static void coop_tick(uint32_t now) {
-    static bool was_level, was_mismatch, forcing;
-    static int last_hour = -1, last_result = -1;
-    World w = {false, 0, 0, 0, false};
-    Writes wr;
-    Packet out;
-    BYTE *rh = read_ptr(exe_base + RVA_RUNHEADER);
-    BYTE *gameover = NULL, *hour = NULL, *night = NULL, *freddy = NULL;
-
-    if (rh && !IsBadReadPtr(rh, RH_OBJECT_LIST + 4)) {
-        log_frame_objects(rh);
-        gameover = find_object(rh, L"gameover");
-        hour = find_object(rh, L"hour");
-        night = find_object(rh, L"Night");
-        freddy = find_object(rh, L"Freddy counter");
-        w.won_screen = frame_has_object(rh, L"num 1"); /* only the `night win` frame has it */
+static void script_run(uint32_t elapsed, bool on_title) {
+    for (int i = 0; i < script_count; i++) {
+        ScriptStep *s = &script[i];
+        if (s->done || s->on_title != on_title || elapsed < s->at) continue;
+        s->done = true;
+        logline("script %s=%d", s->command, s->value);
+        if (strcmp(s->command, "av0") == 0) av_write(obj(L"follow"), 0, s->value);
+        else if (strcmp(s->command, "x") == 0) { int x, y; if (pos_read(obj(L"follow"), &x, &y)) pos_write(obj(L"follow"), s->value, y); }
+        else if (strcmp(s->command, "shot") == 0) {
+            char path[MAX_PATH], name[32];
+            snprintf(name, sizeof name, "shot%d.bmp", s->value);
+            path_beside_self(path, sizeof path, name);
+            logline("shot %s", overlay_save(path) ? "saved" : "failed");
+        }
+        else if (strcmp(s->command, "click") == 0) {
+            /* Goes through the window's real message path, value is x*10000+y in view coordinates. */
+            RECT r;
+            HWND w = overlay_game_window();
+            if (w && GetClientRect(w, &r)) {
+                LPARAM at_pos = MAKELPARAM((s->value / 10000) * r.right / 1024, (s->value % 10000) * r.bottom / 768);
+                PostMessageW(w, WM_MOUSEMOVE, 0, at_pos);
+                PostMessageW(w, WM_LBUTTONDOWN, MK_LBUTTON, at_pos);
+                PostMessageW(w, WM_LBUTTONUP, 0, at_pos);
+            }
+        }
+        else if (strcmp(s->command, "text") == 0) {
+            HWND w = overlay_game_window();
+            for (const char *c = s->text; *c; c++) PostMessageW(w, WM_CHAR, (WPARAM)(unsigned char)*c, 0);
+        }
+        else if (strcmp(s->command, "vk") == 0) {
+            HWND w = overlay_game_window();
+            PostMessageW(w, WM_KEYDOWN, (WPARAM)s->value, 0);
+            PostMessageW(w, WM_CHAR, (WPARAM)s->value, 0);
+            PostMessageW(w, WM_KEYUP, (WPARAM)s->value, 0);
+        }
+        else if (strcmp(s->command, "key") == 0) key_bot(s->value, true);
+        else if (strcmp(s->command, "unkey") == 0) key_bot(s->value, false);
+        else if (strcmp(s->command, "hour") == 0) cnt_set(L"hour", s->value);
+        else if (strcmp(s->command, "kill") == 0) cfg_test_kill = s->value;
+        else if (strcmp(s->command, "goto") == 0) game_goto(s->value);
+        else if (strcmp(s->command, "next") == 0) game_next_frame();
+        else if (strcmp(s->command, "bonnie") == 0) { int x, y; if (pos_read(obj(L"left hall far"), &x, &y)) pos_write(obj(L"Bonnie"), x + 1, y); }
     }
-    if (gameover && hour && night && freddy && counter_read(gameover, &w.gameover) && counter_read(hour, &w.hour) &&
-        counter_read(night, &w.night))
-        w.in_level = true;
+}
 
-    /* Test only: the frames run title, what night, level, so "next frame" reaches a night unattended. */
-    if (cfg_test_mode && cfg_test_skip_title && rh && !w.in_level && find_object(rh, L"selection")) {
-        static uint32_t title_ms;
+static void log_state(uint32_t now, const Local *l, const Output *o) {
+    static uint32_t last;
+    if (now - last < STATE_LOG_MS) return;
+    last = now;
+    int av0 = -1, bx = 0, by = 0, cx = 0, cy = 0, fx = 0, fy = 0;
+    if (l->in_level) {
+        av_read(obj(L"follow"), 0, &av0);
+        pos_read(obj(L"Bonnie"), &bx, &by);
+        pos_read(obj(L"Chica"), &cx, &cy);
+        pos_read(obj(L"foxy"), &fx, &fy);
+    }
+    if (l->frame == FRAME_PLUSHTRAP || l->frame == FRAME_BB) {
+        int px = 0, py = 0;
+        pos_read(obj(L"plushtrap"), &px, &py);
+        logline("mini frame=%d light=%d time=%d active=%d trap=%d,%d others=%03x", l->frame, cnt_get(L"light on", -1), cnt_get(L"Counter", -1), cnt_get(L"becoming active", -1), px, py, o->others);
+        return;
+    }
+    logline("state frame=%d hour=%d night=%d av0=%d doors=%d/%d freddy=%d b=%d,%d c=%d,%d f=%d,%d players=%d %s", l->frame, cnt_get(L"hour", -1), cnt_get(L"Night", -1), av0,
+            cnt_get(L"left door shut", -1), cnt_get(L"right door shut", -1), cnt_get(L"Freddy counter", -1), bx, by, cx, cy, fx, fy, o->player_count, rules_debug());
+}
+
+static void update_room_panel(const Output *o, uint32_t now) {
+    if (menu.room == ROOM_JOINING) {
+        if (sync_state.have_host) {
+            menu.room = ROOM_JOINED;
+            logline("joined the room of %s", sync_state.host.name);
+        } else if (now - join_started_ms >= JOIN_TIMEOUT_MS) {
+            room_leave("Could not reach that room");
+            return;
+        }
+    }
+    if (menu.room == ROOM_JOINED) {
+        strncpy(menu.room_name, sync_state.host.name, SYNC_NAME_LEN - 1);
+        if (o->host_lost) {
+            room_leave(sync_state.host_closed ? "The host closed the room" : "Lost connection to the host");
+            if (game_frame() != FRAME_TITLE) game_goto(FRAME_TITLE);
+            return;
+        }
+    }
+    menu.player_count = 1 + o->player_count;
+    snprintf(menu.players, sizeof menu.players, "%s", menu.name);
+    for (int i = 0; i < o->player_count; i++) {
+        size_t used = strlen(menu.players);
+        snprintf(menu.players + used, sizeof menu.players - used, ", %s", o->players[i].name);
+    }
+}
+
+static bool game_input_blocked(void) {
+    if (game_frame() != FRAME_TITLE) return false;
+    /* New Game would wipe a client's own save, and the host's frame would pull it straight back. */
+    return menu.open || menu.room == ROOM_JOINING || menu.room == ROOM_JOINED;
+}
+
+static void test_tick(uint32_t now, const Local *l, const Output *o, uint32_t level_ms) {
+    static uint32_t title_ms, first_title;
+    if (cfg_test_skip_title && l->frame == FRAME_TITLE) {
         if (!title_ms) title_ms = now;
-        if (now - title_ms > (uint32_t)cfg_test_skip_title) {
-            *(short *)(rh + RH_QUIT) = LOOPEXIT_NEXTLEVEL;
-            title_ms = 0;
+        if (title_ms != 0xFFFFFFFFu && now - title_ms > (uint32_t)cfg_test_skip_title) {
+            game_next_frame();
             logline("test: leaving the title screen");
+            title_ms = 0xFFFFFFFFu;
         }
     }
-
-    if (w.in_level != was_level) {
-        logline(w.in_level ? "night %d started" : "left the night", w.night);
-        was_level = w.in_level;
-        level_start_ms = now;
-        forcing = false;
-        last_hour = -1;
+    if (level_ms) script_run(now - level_ms, false);
+    if (l->frame == FRAME_TITLE) {
+        if (!first_title) first_title = now;
+        script_run(now - first_title, true);
     }
-    if (w.in_level && w.hour != last_hour) { logline("hour %d", w.hour); last_hour = w.hour; }
+    if (l->in_level && cfg_test_kill) rules_force_kill(cfg_test_kill);
+    if (in_room) log_state(now, l, o);
+}
 
-    net_poll(now);
-    sync_step(&sync_state, now, &w, &wr, &out);
-    net_send(&out);
+static void coop_tick(uint32_t now) {
+    static int last_frame = -1;
+    static uint32_t level_ms;
+    static bool was_level;
+    static OverlayScene scene;
+    Local l;
+    Output o;
+    Packet out;
 
-    if (w.in_level) {
-        if (wr.set_hour) counter_write(hour, wr.hour);
-        if (wr.force_death) {
-            counter_write(freddy, DEATH_FREDDY_COUNTER);
-            if (!forcing) logline("another player died, starting the kill");
-            forcing = true;
+    if (!game_begin()) return;
+    memset(&l, 0, sizeof l);
+    memset(&o, 0, sizeof o);
+    l.frame = game_frame();
+    if (in_room) {
+        rules_frame();
+        rules_read(&l);
+    }
+    if (l.frame != last_frame) {
+        logline("frame %d (%d rules)", l.frame, evg_count());
+        if (l.frame == FRAME_LEVEL && !in_room) logline("solo night, co-op rules %s", rules_host_off_is_active() ? "STILL ON" : "off");
+        last_frame = l.frame;
+    }
+    if (l.frame != FRAME_TITLE) menu.open = false;
+    if (l.in_level != was_level) {
+        logline(l.in_level ? "night %d started" : "left the night", cnt_get(L"Night", -1));
+        was_level = l.in_level;
+        if (l.in_level) {
+            level_ms = now;
+            for (int i = 0; i < script_count; i++)
+                if (!script[i].on_title) script[i].done = false;
         }
-        static bool test_hour_done;
-        if (cfg_test_mode && cfg_test_hour_ms > 0 && !test_hour_done && now - level_start_ms > (uint32_t)cfg_test_hour_ms) {
-            counter_write(hour, cfg_test_hour);
-            test_hour_done = true;
-            logline("test: set hour to %d", cfg_test_hour);
+        cfg_test_kill = 0;
+    }
+
+    if (in_room) {
+        net_poll(now);
+        sync_step(&sync_state, now, &l, &o, &out);
+        net_send(&out);
+        if (sync_state.is_host) {
+            announce_room(now, 1 + o.player_count);
+            find_rooms(now);
         }
-        if (cfg_test_mode && cfg_test_kill_ms > 0 && !w.gameover && now - level_start_ms > (uint32_t)cfg_test_kill_ms)
-            counter_write(freddy, DEATH_FREDDY_COUNTER);
+        rules_apply(&o, &l, now);
+        if (o.go_to_frame) {
+            logline("following the host to frame %d", o.frame);
+            game_goto(o.frame);
+        }
+        if (o.apply_kill) {
+            static int logged;
+            if (logged != o.apply_kill) logline("shared scare %d", o.apply_kill);
+            logged = o.apply_kill;
+        }
+        update_room_panel(&o, now);
+    } else if (l.frame == FRAME_TITLE && menu.open) {
+        find_rooms(now);
     }
-    if (sync_state.is_host && sync_state.result != last_result) {
-        logline("result %d", sync_state.result);
-        last_result = sync_state.result;
+
+    memset(&scene, 0, sizeof scene);
+    if (in_room) rules_scene(&o, &l, now, &scene);
+    if (l.frame == FRAME_TITLE) menu_draw(&menu, &lobby, now, &scene);
+    overlay_show(&scene);
+    key_mute(game_input_blocked());
+
+    if (cfg_test_mode) test_tick(now, &l, &o, level_ms);
+}
+
+/* Runs ahead of the game's own window handling, so the panel gets clicks and typing first. */
+static LRESULT CALLBACK game_proc(HWND h, UINT msg, WPARAM w, LPARAM lp) {
+    MenuAction action = ACTION_NONE;
+    if (game_frame() == FRAME_TITLE) {
+        bool blocked = game_input_blocked();
+        RECT r;
+        int x = 0, y = 0;
+        if (GetClientRect(h, &r) && r.right > 0 && r.bottom > 0) {
+            x = (short)LOWORD(lp) * 1024 / r.right;
+            y = (short)HIWORD(lp) * 768 / r.bottom;
+        }
+        switch (msg) {
+        case WM_MOUSEMOVE:
+            menu_mouse(&menu, x, y);
+            if (blocked) return 0;
+            break;
+        case WM_LBUTTONDOWN:
+            if (menu_click(&menu, &lobby, x, y, &action)) {
+                click_taken = true;
+                run_action(action);
+                return 0;
+            }
+            if (blocked) return 0;
+            break;
+        case WM_LBUTTONUP:
+            if (click_taken || blocked) {
+                click_taken = false;
+                return 0;
+            }
+            break;
+        case WM_CHAR:
+            if (menu.open) {
+                menu_char(&menu, (int)w, &action);
+                run_action(action);
+                return 0;
+            }
+            if (blocked) return 0;
+            break;
+        case WM_KEYDOWN:
+            if (menu.open && w == VK_ESCAPE) {
+                menu_escape(&menu, &action);
+                run_action(action);
+                return 0;
+            }
+            if (blocked) return 0;
+            break;
+        case WM_KEYUP:
+            if (blocked) return 0;
+            break;
+        default: break;
+        }
     }
-    if (sync_state.night_mismatch != was_mismatch) {
-        logline(sync_state.night_mismatch ? "WARNING: you are not on the host's night, the clock is not linked" : "night matches host");
-        was_mismatch = sync_state.night_mismatch;
-    }
+    return CallWindowProcW(game_proc_next, h, msg, w, lp);
 }
 
 __attribute__((used)) DWORD coop_timeGetTime(void) {
@@ -294,11 +616,21 @@ __attribute__((used)) DWORD coop_timeGetTime(void) {
     if (!enabled || GetCurrentThreadId() != main_thread) return now;
     if (!started) {
         started = true;
-        start_ms = now;
         logline("first tick on the game thread");
-        net_start();
+        input_install();
+        logline("input hook %s", input_hooked() ? "on" : "off");
+        WSADATA wsa;
+        WSAStartup(MAKEWORD(2, 2), &wsa);
+        find_adapters();
+        logline("this computer: %s", best_address());
+        if (strcmp(cfg_role, "host") == 0) room_host();
+        else if (strcmp(cfg_role, "client") == 0 && cfg_host[0]) room_join_address(cfg_host);
     }
-    if (now - last_tick >= 50) {
+    if (!game_proc_next && overlay_game_window()) {
+        game_proc_next = (WNDPROC)SetWindowLongPtrW(overlay_game_window(), GWLP_WNDPROC, (LONG_PTR)game_proc);
+        logline("window hook on");
+    }
+    if (now - last_tick >= TICK_MS) {
         last_tick = now;
         coop_tick(now);
     }
@@ -306,24 +638,22 @@ __attribute__((used)) DWORD coop_timeGetTime(void) {
 }
 
 static void load_config(void) {
-    char ini[MAX_PATH], logp[MAX_PATH];
-    path_beside_self(ini, sizeof ini, "fnaf4coop.ini");
+    char logp[MAX_PATH], name[SYNC_NAME_LEN], bot[512];
+    path_beside_self(cfg_ini, sizeof cfg_ini, "fnaf4coop.ini");
     path_beside_self(logp, sizeof logp, "fnaf4coop.log");
-    GetPrivateProfileStringA("coop", "role", "off", cfg_role, sizeof cfg_role, ini);
-    GetPrivateProfileStringA("coop", "host", "", cfg_host, sizeof cfg_host, ini);
-    cfg_port = (int)GetPrivateProfileIntA("coop", "port", 47114, ini);
-    cfg_test_mode = (int)GetPrivateProfileIntA("test", "test_mode", 0, ini);
-    cfg_test_kill_ms = (int)GetPrivateProfileIntA("test", "kill_after_ms", 0, ini);
-    cfg_test_skip_title = (int)GetPrivateProfileIntA("test", "skip_title_ms", 0, ini);
-    cfg_test_hour_ms = (int)GetPrivateProfileIntA("test", "hour_after_ms", 0, ini);
-    cfg_test_hour = (int)GetPrivateProfileIntA("test", "hour_value", 0, ini);
+    GetPrivateProfileStringA("coop", "role", "off", cfg_role, sizeof cfg_role, cfg_ini);
+    GetPrivateProfileStringA("coop", "host", "", cfg_host, sizeof cfg_host, cfg_ini);
+    GetPrivateProfileStringA("coop", "name", "Player", name, sizeof name, cfg_ini);
+    cfg_port = (int)GetPrivateProfileIntA("coop", "port", 47114, cfg_ini);
+    cfg_test_mode = (int)GetPrivateProfileIntA("test", "test_mode", 0, cfg_ini);
+    cfg_test_skip_title = (int)GetPrivateProfileIntA("test", "skip_title_ms", 0, cfg_ini);
+    GetPrivateProfileStringA("test", "script", "", bot, sizeof bot, cfg_ini);
     logf_ = fopen(logp, "w");
-    bool is_host = strcmp(cfg_role, "host") == 0, is_client = strcmp(cfg_role, "client") == 0;
-    logline("fnaf4coop 1 role=%s", cfg_role);
-    if (!is_host && !is_client) return;
-    if (is_client && !cfg_host[0]) { logline("role=client needs host="); return; }
+    logline("fnaf4coop 3 role=%s name=%s", cfg_role, name);
     if (!exe_is_supported()) { logline("this exe is not the supported Steam build, co-op is off"); return; }
-    sync_init(&sync_state, is_host, GetTickCount() ^ (GetCurrentProcessId() << 16));
+    menu_init(&menu, name);
+    lobby_clear(&lobby);
+    if (cfg_test_mode) script_parse(bot);
     enabled = true;
 }
 
@@ -333,6 +663,7 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID reserved) {
     self = inst;
     main_thread = GetCurrentThreadId();
     exe_base = (BYTE *)GetModuleHandleA(NULL);
+    game_init(exe_base);
     DisableThreadLibraryCalls(inst);
     if (!load_real()) return FALSE;
     load_config();

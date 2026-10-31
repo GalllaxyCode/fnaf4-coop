@@ -1,6 +1,7 @@
-; Put this file next to the game's exe with winmm.dll.
-; role: host, client or off. The host needs one player to be reachable on the port below.
+; Optional. The CO-OP button on the title screen sets all of this up.
+; role=host or role=client starts a room automatically, without the panel.
 [coop]
 role=off
+name=Player
 host=
 port=47114
