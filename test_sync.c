@@ -327,6 +327,22 @@ static void test_last_death_scares_everyone_before_the_night_ends(void) {
     run(400);
     CHECK(a[0].o.end_night, "a scare that never finished held the night open");
 }
+static void test_fredbear_and_nightmare_are_animatronics(void) {
+    reset(LEVEL);
+    settings(MODE_VERSUS, false);
+    run(100);
+    a[1].l.side = SIDE_FREDBEAR;
+    a[2].l.side = SIDE_NIGHTMARE;
+    run(100);
+    CHECK(a[0].o.survivors == PLAYERS - 2, "survivors %d", a[0].o.survivors);
+    bool seen = false;
+    for (int i = 0; i < a[3].o.player_count; i++) seen = seen || a[3].o.players[i].side == SIDE_NIGHTMARE;
+    CHECK(seen, "a client missed the Nightmare player");
+    a[2].l.command_seq = 1;
+    a[2].l.command_zone = 3;
+    run(100);
+    CHECK(a[0].s.peers[1].command_seq == 1, "the move was not received");
+}
 static void test_a_leaver_ending_the_night_needs_no_scare(void) {
     reset(LEVEL);
     settings(MODE_VERSUS, true);
@@ -406,6 +422,7 @@ int main(void) {
             test_last_standing_keeps_the_night_going();
             test_last_death_scares_everyone_before_the_night_ends();
             test_a_leaver_ending_the_night_needs_no_scare();
+            test_fredbear_and_nightmare_are_animatronics();
             test_a_ghost_keeps_its_scare_when_the_host_moves_on();
             test_rescue_saves_the_victim();
             test_missed_rescue_kills_everyone();

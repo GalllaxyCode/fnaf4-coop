@@ -41,7 +41,7 @@ static const char *const mode_lines[MODE_COUNT][2] = {
     {"EYES see but can't hear breathing.", "EARS hear but have no flashlight."},
     {"Play as an animatronic, or survive them.", "Pick your side below."}};
 static const char *const side_names[MODE_COUNT][SIDE_COUNT] = {
-    {"", "", "", ""}, {"", "", "", ""}, {"EYES", "EARS", "", ""}, {"SURVIVOR", "BONNIE", "CHICA", "FOXY"}};
+    {"", "", "", "", "", ""}, {"", "", "", "", "", ""}, {"EYES", "EARS", "", "", "", ""}, {"SURVIVOR", "BONNIE", "CHICA", "FOXY", "FREDBEAR", "NIGHTMARE"}};
 
 const char *menu_mode_name(int mode) { return mode >= 0 && mode < MODE_COUNT ? mode_names[mode] : ""; }
 const char *menu_side_name(int mode, int side) { return mode >= 0 && mode < MODE_COUNT && side >= 0 && side < SIDE_COUNT ? side_names[mode][side] : ""; }

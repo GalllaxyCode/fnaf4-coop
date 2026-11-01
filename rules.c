@@ -23,6 +23,9 @@
 #define FRAME_NIGHTMARE 15
 #define WALK_AWAY_TOP 682 /* the `run back` zone, in view coordinates */
 #define WALK_AWAY_BOTTOM 762
+#define RULE_NIGHTMARE_EXIT 431 /* a scare with `shadow` on leaves the night at once */
+#define SCARE_REPORT_MS 250 /* long enough for the death to reach the host first */
+#define NIGHTMARE_SCARE_MS 4500 /* the frame's own timer sends it to Extras at 5 s */
 #define COUNT(a) (sizeof(a) / sizeof((a)[0]))
 
 /* follow AV0 values, from the level sheet. */
@@ -54,6 +57,13 @@ static const short client_off_level[] = {
 static const short host_off_level[] = {48, 126, 192, 193, 194, 195};
 #define RULE_TRAP_CAUGHT 20 /* the light sends him back to the chair */
 static const short client_off_minigame[] = {3, 6, 8, 9, RULE_TRAP_CAUGHT, 44};
+
+/* Fredbear's own roaming and teleports, which a player takes over. */
+static const short fredbear_roam_level[] = {151, 152, 326, 327, 328, 329, 446, 447, 448, 449, 478};
+/* With `shadow` on these turn the night into Night 7 or 8. */
+static const short shadow_night_level[] = {405, 406, 407, 408};
+/* His timer at a hall runs on the host alone, and a host playing an animatronic can't die to it. */
+static const short hall_timer_level[] = {451, 452, 453, 454, 455};
 
 /* Host reads of `listening mode` that decide threats move to their own counters, one per side, so a
  * player listening at each door both count and the host's breathing audio stays its own. */
@@ -177,6 +187,16 @@ static void row_write(const Row *r, int value) {
     }
 }
 
+static void disable_all(const short *list, size_t n) {
+    for (size_t i = 0; i < n; i++) evg_disable(list[i]);
+}
+
+static void sides_taken(const Output *o, bool taken[SIDE_COUNT]) {
+    memset(taken, 0, SIDE_COUNT * sizeof *taken);
+    taken[side] = true;
+    for (int i = 0; i < o->player_count; i++) taken[o->players[i].side] = true;
+}
+
 /* Rule switches that depend on the player, kept up to date on every tick. */
 static void role_rules(const Output *o) {
     if (game_frame() != FRAME_LEVEL) return;
@@ -193,18 +213,17 @@ static void role_rules(const Output *o) {
         evg_disable(466);
         evg_disable(467);
     }
+    if (!host && mode == MODE_VERSUS)
+        for (size_t i = 0; i < COUNT(hall_timer_level); i++) evg_enable(hall_timer_level[i]);
     if (host && mode == MODE_VERSUS) {
-        bool taken[SIDE_COUNT] = {false, false, false, false};
-        taken[side] = true;
-        for (int i = 0; i < o->player_count; i++) taken[o->players[i].side] = true;
+        bool taken[SIDE_COUNT];
+        sides_taken(o, taken);
         if (taken[SIDE_BONNIE]) { evg_disable(149); evg_disable(436); }
         if (taken[SIDE_CHICA]) { evg_disable(150); evg_disable(437); }
         if (taken[SIDE_FOXY]) evg_disable(118);
+        if (taken[SIDE_FREDBEAR] || taken[SIDE_NIGHTMARE]) disable_all(fredbear_roam_level, COUNT(fredbear_roam_level));
+        if (taken[SIDE_NIGHTMARE]) disable_all(shadow_night_level, COUNT(shadow_night_level));
     }
-}
-
-static void disable_all(const short *list, size_t n) {
-    for (size_t i = 0; i < n; i++) evg_disable(list[i]);
 }
 
 /* A frame's events are reloaded when it restarts, so the patches are checked on every tick. */
@@ -333,6 +352,7 @@ void rules_read(Local *l) {
         last_av0 = -1;
         force_active = false;
         scare_on = false;
+        l->scaring = frame == FRAME_NIGHTMARE;
         return;
     }
     l->in_level = true;
@@ -477,6 +497,11 @@ static int zone_of(int x, int y) {
 }
 
 /* Footsteps are the game's main warning, so a mirrored move sets the same flag a real move sets. */
+static void fredbear_move_sound(int zone) {
+    if (zone == Z_LIVING_LEFT) av_write(obj(L"follow"), 11, 3);
+    if (zone == Z_LIVING_RIGHT) av_write(obj(L"follow"), 17, 3);
+}
+
 static void play_move_sounds(const int32_t *v) {
     BYTE *follow = obj(L"follow");
     int x, y, mark, unused;
@@ -496,6 +521,7 @@ static void play_move_sounds(const int32_t *v) {
         if (z == Z_LIVING_LEFT) av_write(follow, 11, 1 + rand() % 2);
         else if (z == Z_LIVING_RIGHT) av_write(follow, 17, 1 + rand() % 2);
     }
+    if (pos_read(obj(L"Fredbear"), &x, &y) && (x != v[V_FRED_X] + mark || y != v[V_FRED_Y])) fredbear_move_sound(zone_of(v[V_FRED_X] + mark, v[V_FRED_Y]));
 }
 
 static void apply_rows(const Row *rows, size_t n, const int32_t *values) {
@@ -685,16 +711,22 @@ static void add_bubble(OverlayScene *scene, int station, int view, const Player 
     snprintf(b->text, OVERLAY_TEXT_LEN, "%s%s%s%s", before, p->name, held, after);
 }
 
-/* Versus: how each animatronic may move, in the game's own zones. */
+/* Versus: how each animatronic may move, in the game's own zones. Fredbear and Nightmare appear in
+ * the closet or on the bed from a hall, the way the game teleports them. */
+#define FREDBEAR_ROUTES {[Z_CENTER] = {Z_LIVING_LEFT, Z_LIVING_RIGHT, -1}, [Z_LIVING_LEFT] = {Z_LEFT_FAR, Z_LIVING_RIGHT, Z_CENTER}, [Z_LIVING_RIGHT] = {Z_RIGHT_FAR, Z_LIVING_LEFT, Z_CENTER}, \
+                         [Z_LEFT_FAR] = {Z_CLOSET, Z_BED, Z_LIVING_LEFT}, [Z_LEFT_NEAR] = {-1, -1, -1}, [Z_RIGHT_FAR] = {Z_CLOSET, Z_BED, Z_LIVING_RIGHT}, [Z_RIGHT_NEAR] = {-1, -1, -1}, \
+                         [Z_KITCHEN] = {-1, -1, -1}, [Z_CLOSET] = {Z_LIVING_LEFT, Z_LIVING_RIGHT, -1}, [Z_BED] = {Z_LIVING_LEFT, Z_LIVING_RIGHT, -1}}
 static const signed char routes[SIDE_COUNT][10][3] = {
     [SIDE_BONNIE] = {[Z_CENTER] = {Z_LIVING_LEFT, -1, -1}, [Z_LIVING_LEFT] = {Z_CENTER, Z_LEFT_FAR, -1}, [Z_LIVING_RIGHT] = {-1, -1, -1}, [Z_LEFT_FAR] = {Z_LEFT_NEAR, Z_LIVING_LEFT, -1},
                      [Z_LEFT_NEAR] = {Z_LEFT_FAR, -1, -1}, [Z_RIGHT_FAR] = {-1, -1, -1}, [Z_RIGHT_NEAR] = {-1, -1, -1}, [Z_KITCHEN] = {-1, -1, -1}, [Z_CLOSET] = {-1, -1, -1}, [Z_BED] = {-1, -1, -1}},
     [SIDE_CHICA] = {[Z_CENTER] = {Z_LIVING_RIGHT, -1, -1}, [Z_LIVING_LEFT] = {-1, -1, -1}, [Z_LIVING_RIGHT] = {Z_KITCHEN, Z_RIGHT_FAR, Z_CENTER}, [Z_LEFT_FAR] = {-1, -1, -1},
                     [Z_LEFT_NEAR] = {-1, -1, -1}, [Z_RIGHT_FAR] = {Z_RIGHT_NEAR, Z_LIVING_RIGHT, -1}, [Z_RIGHT_NEAR] = {Z_RIGHT_FAR, -1, -1}, [Z_KITCHEN] = {Z_LIVING_RIGHT, -1, -1}, [Z_CLOSET] = {-1, -1, -1}, [Z_BED] = {-1, -1, -1}},
     [SIDE_FOXY] = {[Z_CENTER] = {Z_LIVING_LEFT, Z_LIVING_RIGHT, -1}, [Z_LIVING_LEFT] = {Z_LIVING_RIGHT, Z_LEFT_FAR, Z_CENTER}, [Z_LIVING_RIGHT] = {Z_LIVING_LEFT, Z_RIGHT_FAR, Z_CENTER}, [Z_LEFT_FAR] = {Z_CLOSET, -1, -1},
-                   [Z_LEFT_NEAR] = {-1, -1, -1}, [Z_RIGHT_FAR] = {Z_CLOSET, -1, -1}, [Z_RIGHT_NEAR] = {-1, -1, -1}, [Z_KITCHEN] = {-1, -1, -1}, [Z_CLOSET] = {Z_CLOSET, -1, -1}, [Z_BED] = {-1, -1, -1}}};
-static const wchar_t *const side_objects[SIDE_COUNT] = {NULL, L"Bonnie", L"Chica", L"foxy"};
-static const wchar_t *const side_ai[SIDE_COUNT] = {NULL, L"Bonnie AI", L"Chica AI", L"Foxy AI"};
+                   [Z_LEFT_NEAR] = {-1, -1, -1}, [Z_RIGHT_FAR] = {Z_CLOSET, -1, -1}, [Z_RIGHT_NEAR] = {-1, -1, -1}, [Z_KITCHEN] = {-1, -1, -1}, [Z_CLOSET] = {Z_CLOSET, -1, -1}, [Z_BED] = {-1, -1, -1}},
+    [SIDE_FREDBEAR] = FREDBEAR_ROUTES,
+    [SIDE_NIGHTMARE] = FREDBEAR_ROUTES};
+static const wchar_t *const side_objects[SIDE_COUNT] = {NULL, L"Bonnie", L"Chica", L"foxy", L"Fredbear", L"Fredbear"};
+static const wchar_t *const side_ai[SIDE_COUNT] = {NULL, L"Bonnie AI", L"Chica AI", L"Foxy AI", L"Fredbear AI", L"Fredbear AI"};
 static const char *const zone_names[10] = {"CENTER", "LIVING ROOM L", "LIVING ROOM R", "LEFT HALL", "LEFT DOOR", "RIGHT HALL", "RIGHT DOOR", "KITCHEN", "CLOSET", "BED"};
 static const short zone_x[10] = {512, 300, 724, 200, 200, 824, 824, 724, 512, 512};
 static const short zone_y[10] = {150, 250, 250, 370, 490, 370, 490, 150, 490, 610};
@@ -732,12 +764,13 @@ static void versus_move(int who, int to, uint32_t now) {
     av_write(o, 1, 0);
     if (who == SIDE_BONNIE) av_write(follow, to == Z_LEFT_FAR || to == Z_LEFT_NEAR ? 21 : 23, 1 + rand() % 3);
     if (who == SIDE_CHICA) av_write(follow, to == Z_RIGHT_FAR || to == Z_RIGHT_NEAR ? 22 : 24, 1 + rand() % 3);
+    if (who == SIDE_FREDBEAR || who == SIDE_NIGHTMARE) fredbear_move_sound(to);
 }
 
 static void versus_host(const Output *o, uint32_t now) {
-    bool taken[SIDE_COUNT] = {false, false, false, false};
-    taken[side] = true;
-    for (int i = 0; i < o->player_count; i++) taken[o->players[i].side] = true;
+    bool taken[SIDE_COUNT];
+    sides_taken(o, taken);
+    if (taken[SIDE_NIGHTMARE]) cnt_set(L"shadow", 1);
     /* A character with no AI is parked off the map, so one a player controls needs at least 1. */
     for (int i = SIDE_BONNIE; i < SIDE_COUNT; i++)
         if (taken[i] && cnt_get(side_ai[i], 0) <= 0) {
@@ -942,6 +975,22 @@ static void update_blocks(const Output *o, const Local *l, uint32_t dt) {
     else key_block(VK_SHIFT_KEY, false);
 }
 
+/* The game's exit from a Nightmare scare beats the mod's next tick, so a death would never be
+ * reported, and its own frame ends in Extras. Here the exit waits for the report, and the scare
+ * ends at game over like any other. */
+static void versus_scare(const Local *l, uint32_t now) {
+    static uint32_t calm_ms, nightmare_ms;
+    int frame = game_frame();
+    if (mode != MODE_VERSUS) return;
+    if (frame == FRAME_LEVEL) {
+        if (!l->scaring) calm_ms = now;
+        if (now - calm_ms >= SCARE_REPORT_MS) evg_enable(RULE_NIGHTMARE_EXIT);
+        else evg_disable(RULE_NIGHTMARE_EXIT);
+    }
+    if (frame != FRAME_NIGHTMARE) nightmare_ms = now;
+    else if (now - nightmare_ms >= NIGHTMARE_SCARE_MS) game_goto(FRAME_GAME_OVER);
+}
+
 void rules_apply(const Output *o, const Local *l, uint32_t now) {
     static uint32_t last;
     uint32_t dt = last ? now - last : 0;
@@ -954,6 +1003,7 @@ void rules_apply(const Output *o, const Local *l, uint32_t now) {
     if (away) return;
     if (l->in_level && o->apply_kill != KILL_NONE) scare_on = true;
     role_rules(o);
+    versus_scare(l, now);
     update_blocks(o, l, dt);
     if (is_ghost()) {
         key_force(VK_SHIFT_KEY, false);

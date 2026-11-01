@@ -117,6 +117,12 @@ static void test_room_settings(void) {
     menu_click(&m, &l, 720, 410, &act);
     menu_click(&m, &l, 720, 410, &act);
     CHECK(m.side == SIDE_FOXY, "side %d", m.side);
+    menu_click(&m, &l, 720, 410, &act);
+    menu_click(&m, &l, 720, 410, &act);
+    CHECK(m.side == SIDE_NIGHTMARE && strcmp(menu_side_name(MODE_VERSUS, m.side), "NIGHTMARE") == 0, "side %d", m.side);
+    menu_click(&m, &l, 720, 410, &act);
+    CHECK(m.side == SIDE_SURVIVOR, "side did not wrap: %d", m.side);
+    for (int i = 0; i < SIDE_FOXY; i++) menu_click(&m, &l, 720, 410, &act);
     menu_click(&m, &l, 720, 230, &act);
     CHECK(m.mode == MODE_DEFAULT && m.side == 0, "side kept in a mode without sides: %d", m.side);
     m.room = ROOM_JOINED;

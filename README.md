@@ -19,9 +19,11 @@ The host picks a mode in the CO-OP panel. In every mode, everyone stands in the 
 | **Default** | The normal game, shared. One death ends the night for everyone. |
 | **Extended** | Animatronics get tougher with each player. The team shares one flashlight battery. Holding a door tires your arms, and sharing a door makes it last twice as long. One team revive per night: when someone is taken, a friend has 12 seconds to light the spot where it happened. |
 | **True cooperative** | Each player picks a side. EYES have the flashlight but can't hear breathing. EARS hear it but have no flashlight. In the Plushtrap and BB minigames, EARS hold the light with a blank screen, and EYES tell them when. |
-| **Versus** | Each player picks Survivor, Bonnie, Chica or Foxy. Animatronic players move on a map of the house, replacing that character's AI. |
+| **Versus** | Each player picks Survivor, Bonnie, Chica, Foxy, Fredbear or Nightmare. Animatronic players move on a map of the house, replacing that character's AI. Fredbear and Nightmare can appear in the closet or on the bed from a hall, and Freddy rests while either is out. |
 
 **Last one standing** can be switched on for any mode. A caught player is out and watches as a ghost while the night continues, and it ends once no survivors are left.
+
+Fredbear and Nightmare are one body in the game, so if both are picked, those players share one Nightmare. Nightmare's timers are shorter than Fredbear's.
 
 A held door shuts for everyone, jumpscares are shared with everyone in the room, animatronic players and ghosts included, and each player's name floats over where they are. Standing with a friend at a door they hold or light, you share it, and moving the mouse down to walk away still works.
 

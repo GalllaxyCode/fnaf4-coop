@@ -416,6 +416,7 @@ static void script_run(uint32_t elapsed, bool on_title) {
             pos_read(obj(L"living room center"), &cx, &cy);
             logline("dump ai=%d,%d,%d,%d bonnie_rel=%d,%d mark=%d danger=%d", cnt_get(L"Bonnie AI", -1), cnt_get(L"Chica AI", -1), cnt_get(L"Foxy AI", -1), cnt_get(L"Freddy AI", -1), bx - cx, by, cx, cnt_get(L"bonnie danger", -1));
         }
+        else if (strcmp(s->command, "map") == 0) rules_map_click(s->value / 10000, s->value % 10000, real_timeGetTime());
         else if (strcmp(s->command, "front") == 0) SetForegroundWindow(overlay_game_window());
         else if (strcmp(s->command, "bg") == 0) test_background = s->value != 0;
         else if (strcmp(s->command, "turn") == 0) cnt_set(L"force turn", 1);
@@ -485,12 +486,13 @@ static void log_state(uint32_t now, const Local *l, const Output *o) {
     static uint32_t last;
     if (now - last < STATE_LOG_MS) return;
     last = now;
-    int av0 = -1, bx = 0, by = 0, cx = 0, cy = 0, fx = 0, fy = 0;
+    int av0 = -1, bx = 0, by = 0, cx = 0, cy = 0, fx = 0, fy = 0, bearx = 0, beary = 0;
     if (l->in_level) {
         av_read(obj(L"follow"), 0, &av0);
         pos_read(obj(L"Bonnie"), &bx, &by);
         pos_read(obj(L"Chica"), &cx, &cy);
         pos_read(obj(L"foxy"), &fx, &fy);
+        pos_read(obj(L"Fredbear"), &bearx, &beary);
     }
     if (l->frame == FRAME_PLUSHTRAP || l->frame == FRAME_BB) {
         int px = 0, py = 0, view = -1;
@@ -499,8 +501,8 @@ static void log_state(uint32_t now, const Local *l, const Output *o) {
         logline("mini frame=%d light=%d time=%d active=%d trap=%d,%d view=%d others=%03x %s", l->frame, cnt_get(L"light on", -1), cnt_get(L"Counter", -1), cnt_get(L"becoming active", -1), px, py, view, o->others, sync_state.is_host ? "" : rules_debug());
         return;
     }
-    logline("state frame=%d hour=%d night=%d av0=%d doors=%d/%d freddy=%d b=%d,%d c=%d,%d f=%d,%d players=%d bat=%d %s", l->frame, cnt_get(L"hour", -1), cnt_get(L"Night", -1), av0,
-            cnt_get(L"left door shut", -1), cnt_get(L"right door shut", -1), cnt_get(L"Freddy counter", -1), bx, by, cx, cy, fx, fy, o->player_count, o->battery, rules_debug());
+    logline("state frame=%d hour=%d night=%d av0=%d doors=%d/%d freddy=%d b=%d,%d c=%d,%d f=%d,%d bear=%d,%d ai=%d shadow=%d players=%d bat=%d %s", l->frame, cnt_get(L"hour", -1), cnt_get(L"Night", -1), av0,
+            cnt_get(L"left door shut", -1), cnt_get(L"right door shut", -1), cnt_get(L"Freddy counter", -1), bx, by, cx, cy, fx, fy, bearx, beary, cnt_get(L"Fredbear AI", -1), cnt_get(L"shadow", -1), o->player_count, o->battery, rules_debug());
 }
 
 /* Every move in the room goes in the log, so a report from a real game can be traced. */

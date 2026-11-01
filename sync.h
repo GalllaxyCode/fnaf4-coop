@@ -7,7 +7,7 @@
 #include <stdint.h>
 
 #define SYNC_MAGIC 0x4F433446u /* "F4CO" */
-#define SYNC_VERSION 3
+#define SYNC_VERSION 4
 #define SYNC_MAX_PEERS 7
 #define SYNC_MAX_PLAYERS (SYNC_MAX_PEERS + 1)
 #define SYNC_NAME_LEN 16
@@ -29,9 +29,9 @@
 
 enum { MODE_DEFAULT, MODE_EXTENDED, MODE_COOP, MODE_VERSUS, MODE_COUNT };
 /* What a player chose in the room. True cooperative uses the first two, Versus uses the survivor and the
- * three animatronics. */
+ * animatronics. Fredbear and Nightmare are one body in the game, so choosing both shares Nightmare. */
 enum { SIDE_EYES = 0, SIDE_EARS = 1 };
-enum { SIDE_SURVIVOR = 0, SIDE_BONNIE = 1, SIDE_CHICA = 2, SIDE_FOXY = 3, SIDE_COUNT };
+enum { SIDE_SURVIVOR = 0, SIDE_BONNIE = 1, SIDE_CHICA = 2, SIDE_FOXY = 3, SIDE_FREDBEAR = 4, SIDE_NIGHTMARE = 5, SIDE_COUNT };
 enum { PLAYER_ALIVE, PLAYER_DOWN, PLAYER_OUT };
 
 /* Where a player is in the room. */

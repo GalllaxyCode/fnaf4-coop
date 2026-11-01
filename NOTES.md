@@ -167,6 +167,20 @@ Last updated 2026-11-01.
   door sent her back; with Last one standing a dead client rejoined as a ghost in 6 s, a dead host
   reloaded and restored the night from a snapshot, and the last death ended it for everyone.
 - GetAdaptersInfo works under this Wine, given a large enough buffer.
+- Fredbear and Nightmare are one object, `Fredbear`. `shadow` above 0 makes it Nightmare: its art, shorter
+  timers (hall 10 s against 15, closet or bed 11 s against 20) and its own scare frame. Only Extras
+  sets `shadow`. Game over, the title and the win frame clear it. Fredbear AI above 0 stops Freddy (rule 432).
+- `shadow`=1 fires rule 405, which makes the night Night 7 with AI 15, so the host turns off 405-408
+  before setting it. Observed: night stayed 2 and AI 1, and a later night read shadow=0, ai=0.
+- Rule 431 leaves for frame 15 in the same frame as the scare, before a tick can report the death.
+  In Versus it waits 250 ms. Frame 15 ends in Extras at 5 s, so Versus goes to game over at 4.5 s.
+- Rules 451-455, his hall timer, ran on the host alone, which can't die as an animatronic. Clients run
+  them in Versus.
+- Versus, real game, two copies, natural kills with no injection: Fredbear in a hall killed the host at
+  about 15 s, Nightmare in a hall killed a client and a host at about 10 s, Nightmare on the bed killed a
+  client at 11.9 s. Nightmare's scare filled the screen on both copies, the host's included. A shut door
+  sent Fredbear away with no death. A survivor's light showed Nightmare in the hall. Fredbear picked by
+  one player and Nightmare by the other shared one Nightmare.
 
 ## Derived
 
@@ -195,7 +209,11 @@ Last updated 2026-11-01.
 - Real macOS clicks. Injected hardware events go through Wine's routing but skip macOS itself.
 - Play by a human with real mouse and keyboard. All real-game runs were test scripts, and the
   walk-away runs moved a per-copy test cursor, not a real macOS mouse.
-- A natural Versus kill, with a player walking an animatronic to the door. Scares there were injected.
+- A natural Versus kill by Bonnie, Chica or Foxy, with a player walking them to the door. Those scares
+  were injected. Fredbear's and Nightmare's natural kills were run.
+- Fredbear or Nightmare in the closet in the real game, and Last one standing with a Nightmare victim
+  who isn't the last, which needs three copies.
+- Nights 5 and 6 in Versus, where the game drives Fredbear's AI itself, and balance of these two sides.
 - In the real game, not yet run: flashlight scares (EV_SCARE_*), closet hold, remote bed view,
   remote listening, Foxy's closet run from a remote side, the BB minigame, Nights 5 and 6.
 - One old run with the host on Night 3 and the client on Night 2 left the host on the night frame
