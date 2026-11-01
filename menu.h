@@ -40,7 +40,7 @@ bool menu_click(Menu *m, const Lobby *lobby, int x, int y, MenuAction *action);
 void menu_char(Menu *m, int c, MenuAction *action);
 void menu_escape(Menu *m, MenuAction *action);
 void menu_set_status(Menu *m, const char *text);
-#define MOD_VERSION "0.3.1"
+#define MOD_VERSION "0.3.2"
 
 /* Mode names and side names, also used by the in-game display. */
 const char *menu_mode_name(int mode);

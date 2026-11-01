@@ -25,6 +25,8 @@ The host picks a mode in the CO-OP panel. In every mode, everyone stands in the 
 
 Fredbear and Nightmare are one body in the game, so if both are picked, those players share one Nightmare. Nightmare's timers are shorter than Fredbear's.
 
+Picking Nightmare loads Night 7 with every other animatronic switched off, unless a player controls it, so it's a straight fight. Winning that night doesn't change anyone's save.
+
 A held door shuts for everyone, jumpscares are shared with every survivor, ghosts included, while animatronic players stay on the map, and each player's name floats over where they are. Standing with a friend at a door they hold or light, you share it, and moving the mouse down to walk away still works.
 
 ## Download

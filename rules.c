@@ -24,6 +24,12 @@
 #define WALK_AWAY_TOP 682 /* the `run back` zone, in view coordinates */
 #define WALK_AWAY_BOTTOM 762
 #define NIGHTMARE_SCARE_MS 4500 /* the frame's own timer sends it to Extras at 5 s */
+#define FRAME_TITLE 1
+#define FRAME_NIGHT_WIN 5
+#define RULE_NIGHT_WIN 384
+#define NIGHT_WIN_MS 9000 /* the win frame moves on at 10 s */
+#define SHADOW_DELAY_MS 500 /* lets the What Night frame read the save first */
+#define NIGHTMARE_HOUR_WIN 6
 #define COUNT(a) (sizeof(a) / sizeof((a)[0]))
 
 /* follow AV0 values, from the level sheet. */
@@ -120,6 +126,8 @@ static int patched_literal_old;
 static BYTE *patched_for;
 static uint32_t last_closet_ms, last_fred_closet_ms, last_fred_bed_ms;
 static int side_restore = -1;
+static bool night_won;
+static uint32_t night_won_ms;
 static char debug_line[160];
 
 void rules_init(bool is_host) {
@@ -142,8 +150,13 @@ void rules_setup(int new_mode, int new_side) {
 static bool playing_animatronic(void) { return mode == MODE_VERSUS && side != SIDE_SURVIVOR; }
 static bool is_ghost(void) { return my_state != PLAYER_ALIVE || playing_animatronic(); }
 bool rules_map_open(void) { return playing_animatronic() && game_frame() == FRAME_LEVEL && !scare_on; }
+static void keep_save_on_win(uint32_t now);
+static bool nightmare_night(void) { return mode == MODE_VERSUS && cnt_get(L"shadow", 0) > 0; }
 /* Frame 15 is Nightmare's scare, so an animatronic player stays on the map until it's over. */
-bool rules_may_follow(int frame) { return !(playing_animatronic() && frame == FRAME_NIGHTMARE); }
+bool rules_may_follow(int frame, uint32_t now) {
+    if (frame == FRAME_NIGHT_WIN && game_frame() == FRAME_LEVEL && nightmare_night()) keep_save_on_win(now);
+    return !(playing_animatronic() && frame == FRAME_NIGHTMARE);
+}
 void rules_command(int zone) {
     command_seq++;
     command_zone = (uint8_t)zone;
@@ -215,6 +228,7 @@ static void role_rules(const Output *o) {
     }
     if (!host && mode == MODE_VERSUS)
         for (size_t i = 0; i < COUNT(hall_timer_level); i++) evg_enable(hall_timer_level[i]);
+    if (nightmare_night()) evg_disable(RULE_NIGHT_WIN);
     if (host && mode == MODE_VERSUS) {
         bool taken[SIDE_COUNT];
         sides_taken(o, taken);
@@ -387,7 +401,9 @@ void rules_read(Local *l) {
 
     if (av0 != last_av0) {
         if (av0 == AV0_BONNIE_HIDE) l->events[EV_SCARE_BONNIE] = true;
-        if (av0 == AV0_CHICA_HIDE && last_av0 == AV0_RIGHT_PEEK) l->events[EV_SCARE_CHICA] = true;
+        /* The bed turn uses this value too. Reaching the door with the light on can pass through the
+         * peek within one tick, so the frame before says nothing and the hide itself decides. */
+        if (av0 == AV0_CHICA_HIDE && obj(L"Chica hide")) l->events[EV_SCARE_CHICA] = true;
         if (av0 == AV0_FOXY_LEFT) l->events[EV_SCARE_FOXY_LEFT] = true;
         if (av0 == AV0_FOXY_RIGHT) l->events[EV_SCARE_FOXY_RIGHT] = true;
         if (av0 == 8 || av0 == 15 || av0 == 27) l->events[EV_MOVED] = true;
@@ -772,7 +788,13 @@ static void versus_move(int who, int to, uint32_t now) {
 static void versus_host(const Output *o, uint32_t now) {
     bool taken[SIDE_COUNT];
     sides_taken(o, taken);
-    if (taken[SIDE_NIGHTMARE]) cnt_set(L"shadow", 1);
+    if (taken[SIDE_NIGHTMARE]) {
+        static const struct { int who; const wchar_t *ai; } rest[] = {{SIDE_BONNIE, L"Bonnie AI"}, {SIDE_CHICA, L"Chica AI"}, {SIDE_FOXY, L"Foxy AI"}, {SIDE_COUNT, L"Freddy AI"}};
+        cnt_set(L"shadow", 1);
+        /* The night is Nightmare against the survivors, plus anyone a player controls. */
+        for (size_t i = 0; i < COUNT(rest); i++)
+            if (rest[i].who == SIDE_COUNT || !taken[rest[i].who]) cnt_set(rest[i].ai, 0);
+    }
     /* A character with no AI is parked off the map, so one a player controls needs at least 1. */
     for (int i = SIDE_BONNIE; i < SIDE_COUNT; i++)
         if (taken[i] && cnt_get(side_ai[i], 0) <= 0) {
@@ -977,6 +999,36 @@ static void update_blocks(const Output *o, const Local *l, uint32_t dt) {
     else key_block(VK_SHIFT_KEY, false);
 }
 
+/* The win frame saves Night + 1, and at Night 7 also unlocks its star and heads for the ending. A
+ * Nightmare night is a match, not progress, so it wins from the night before the save's. */
+static void keep_save_on_win(uint32_t now) {
+    char path[MAX_PATH + 32] = "";
+    /* Each copy reads its own file: the counter holds the host's night, or 7 by now. */
+    DWORD length = GetEnvironmentVariableA("APPDATA", path, MAX_PATH);
+    if (length > 0 && length < MAX_PATH) strcat(path, "\\MMFApplications\\fn4");
+    if (!night_won) night_won_ms = now;
+    night_won = true;
+    cnt_set(L"Night", (int)GetPrivateProfileIntA("fn4", "night", 1, path) - 1);
+}
+
+static void nightmare_rounds(const Output *o, const Local *l, uint32_t now) {
+    static uint32_t title_ms;
+    int frame = game_frame();
+    if (frame == FRAME_TITLE) night_won = false;
+    if (frame == FRAME_WHAT_NIGHT) {
+        bool taken[SIDE_COUNT];
+        sides_taken(o, taken);
+        if (now - title_ms >= SHADOW_DELAY_MS && host && mode == MODE_VERSUS && taken[SIDE_NIGHTMARE]) cnt_set(L"shadow", 1);
+    } else {
+        title_ms = now;
+    }
+    if (l->in_level && nightmare_night() && cnt_get(L"hour", 0) == NIGHTMARE_HOUR_WIN) {
+        keep_save_on_win(now);
+        game_goto(FRAME_NIGHT_WIN);
+    }
+    if (night_won && frame == FRAME_NIGHT_WIN && now - night_won_ms >= NIGHT_WIN_MS) game_goto(FRAME_TITLE);
+}
+
 /* Nightmare's scare frame ends in Extras, so in Versus it ends at game over like any other scare. */
 static void versus_scare(uint32_t now) {
     static uint32_t nightmare_ms;
@@ -1037,5 +1089,6 @@ void rules_apply(const Output *o, const Local *l, uint32_t now) {
             apply_rows(night_title_rows, COUNT(night_title_rows), o->values);
         }
     }
+    nightmare_rounds(o, l, now);
     if (l->in_level) snprintf(debug_line, sizeof debug_line, "kill=%d force=%d others=%03x input=%03x grip=%d", l->kill, force_active, o->others, l->input, grip);
 }

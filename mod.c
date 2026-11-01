@@ -490,6 +490,7 @@ static void script_run(uint32_t elapsed, bool on_title) {
             logline("dump ai=%d,%d,%d,%d bonnie_rel=%d,%d mark=%d danger=%d", cnt_get(L"Bonnie AI", -1), cnt_get(L"Chica AI", -1), cnt_get(L"Foxy AI", -1), cnt_get(L"Freddy AI", -1), bx - cx, by, cx, cnt_get(L"bonnie danger", -1));
         }
         else if (strcmp(s->command, "shadow") == 0) cnt_set(L"shadow", s->value);
+        else if (strcmp(s->command, "chica") == 0) { int x, y; if (pos_read(obj(L"right hall far"), &x, &y)) pos_write(obj(L"Chica"), x + 1, y); }
         else if (strcmp(s->command, "map") == 0) rules_map_click(s->value / 10000, s->value % 10000, real_timeGetTime());
         else if (strcmp(s->command, "front") == 0) SetForegroundWindow(overlay_game_window());
         else if (strcmp(s->command, "bg") == 0) test_background = s->value != 0;
@@ -739,7 +740,7 @@ static void coop_tick(uint32_t now) {
             logline("everyone is out, the night is over");
             game_goto(FRAME_TEAM_LOST);
         }
-        if (o.go_to_frame && rules_may_follow(o.frame)) {
+        if (o.go_to_frame && rules_may_follow(o.frame, now)) {
             logline("following the host to frame %d", o.frame);
             game_goto(o.frame);
         }

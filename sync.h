@@ -7,7 +7,7 @@
 #include <stdint.h>
 
 #define SYNC_MAGIC 0x4F433446u /* "F4CO" */
-#define SYNC_VERSION 5
+#define SYNC_VERSION 6
 #define SYNC_MAX_PEERS 7
 #define SYNC_MAX_PLAYERS (SYNC_MAX_PEERS + 1)
 #define SYNC_NAME_LEN 16

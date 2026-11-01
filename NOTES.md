@@ -183,6 +183,18 @@ Last updated 2026-11-01.
   counts a kill made there. A host that isn't the last death watches 4.5 s, then reloads the night.
 - Animatronic players get no scare and stay on the map. A host playing one ends the night 1.5 s after a
   kill, and a client playing one follows the host, but not into frame 15.
+- Chica: rule 65 fires when the player reaches AV0 17 with Ctrl held and Chica in the hall, and it can
+  pass 17 inside one 50 ms tick, so the mod saw 16-41. The scare only counted after a seen 17, because
+  the bed turn also uses 41. The host kept her in the hall and the hide replayed about every 0.55 s, with
+  17 lasting one frame, until she reached the door. From a real log: 16-41 at 00:17:25.3, kill 2.75 s
+  later. With the old check restored, 41 held 4.8 s and she stayed. Now the `Chica hide` object decides:
+  one 0.76 s hide, and the host moves her home.
+- A Nightmare night is a match: What Night reads `shadow`=1 and sets Night 7, and the host holds other
+  AI at 0 unless a player controls them. The win frame saves Night + 1, and at Night 7 writes `beat7` and
+  heads for the Plushtrap frame, so each copy turns off rule 384, sets Night to its own file's night - 1
+  at hour 6 and returns to the title after 9 s. The first version kept the night in memory, and a
+  client's save went from 2 to 1 because the host's `shadow` had already arrived. Each copy now reads
+  `fn4` itself. With host 4 and client 2, both saves were unchanged after a win.
 - Fredbear and Nightmare are one object, `Fredbear`. `shadow` above 0 makes it Nightmare: its art, shorter
   timers (hall 10 s against 15, closet or bed 11 s against 20) and its own scare frame. Only Extras
   sets `shadow`. Game over, the title and the win frame clear it. Fredbear AI above 0 stops Freddy (rule 432).
