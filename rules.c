@@ -21,6 +21,8 @@
 #define RESUME_TICKS 8
 #define FRAME_GAME_OVER 4
 #define FRAME_NIGHTMARE 15
+#define WALK_AWAY_TOP 682 /* the `run back` zone, in view coordinates */
+#define WALK_AWAY_BOTTOM 762
 #define COUNT(a) (sizeof(a) / sizeof((a)[0]))
 
 /* follow AV0 values, from the level sheet. */
@@ -50,7 +52,8 @@ static const short client_off_level[] = {
     451, 452, 453, 454, 455, 469, 470, 476, 477, 478};
 /* Rules the host needs off because the mod merges these values from every player. */
 static const short host_off_level[] = {48, 126, 192, 193, 194, 195};
-static const short client_off_minigame[] = {3, 6, 8, 9, 44};
+#define RULE_TRAP_CAUGHT 20 /* the light sends him back to the chair */
+static const short client_off_minigame[] = {3, 6, 8, 9, RULE_TRAP_CAUGHT, 44};
 
 /* Host reads of `listening mode` that decide threats move to their own counters, one per side, so a
  * player listening at each door both count and the host's breathing audio stays its own. */
@@ -74,6 +77,13 @@ enum { V_HOUR, V_NIGHT, V_SHADOW, V_BONNIE_AI, V_CHICA_AI, V_FOXY_AI, V_FREDDY_A
 static const Row mini_rows[] = {{L"Counter", ROW_COUNTER, 0}, {L"becoming active", ROW_COUNTER, 0}, {L"random", ROW_COUNTER, 0}, {L"is aggressive?", ROW_COUNTER, 0}, {L"plushtrap", ROW_X, 0}, {L"plushtrap", ROW_Y, 0}};
 enum { M_COUNTER, M_ACTIVE, M_RANDOM, M_AGGRESSIVE, M_X, M_Y };
 
+/* Plushtrap's path, and the `random` value that sends him each way (0 when there is only one way). */
+enum { TRAP_CHAIR, TRAP_HALL_1, TRAP_FAR_LEFT, TRAP_FAR_RIGHT, TRAP_HALL_2, TRAP_CLOSE_LEFT, TRAP_CLOSE_RIGHT, TRAP_HALL_3, TRAP_GOT_YOU, TRAP_ZONES };
+static const wchar_t *const trap_zones[TRAP_ZONES] = {L"in chair", L"hall stage 1", L"far left room", L"far right room", L"hall stage 2", L"close left room", L"close right room", L"hall stage 3", L"got you"};
+static const signed char trap_steps[][3] = {
+    {TRAP_CHAIR, TRAP_HALL_1, 0}, {TRAP_HALL_1, TRAP_FAR_LEFT, 1}, {TRAP_HALL_1, TRAP_FAR_RIGHT, 2}, {TRAP_FAR_LEFT, TRAP_HALL_2, 0}, {TRAP_FAR_RIGHT, TRAP_HALL_2, 0},
+    {TRAP_HALL_2, TRAP_CLOSE_LEFT, 1}, {TRAP_HALL_2, TRAP_CLOSE_RIGHT, 2}, {TRAP_CLOSE_LEFT, TRAP_HALL_3, 0}, {TRAP_CLOSE_RIGHT, TRAP_HALL_3, 0}, {TRAP_HALL_3, TRAP_GOT_YOU, 0}};
+
 static const Row night_title_rows[] = {{L"Night", ROW_COUNTER, 0}, {L"shadow", ROW_COUNTER, 0}};
 
 /* A ghost (dead, or playing an animatronic) can't be killed, and its own position counts for nothing. */
@@ -96,6 +106,7 @@ static int my_kill;
 static int forced_kind;
 static int last_av0 = -1;
 static bool force_active;
+static bool scare_on; /* a shared scare is on its way, or playing, and everyone watches it */
 static int *patched_literal;
 static int patched_literal_old;
 static BYTE *patched_for;
@@ -122,7 +133,7 @@ void rules_setup(int new_mode, int new_side) {
 
 static bool playing_animatronic(void) { return mode == MODE_VERSUS && side != SIDE_SURVIVOR; }
 static bool is_ghost(void) { return my_state != PLAYER_ALIVE || playing_animatronic(); }
-bool rules_map_open(void) { return playing_animatronic() && game_frame() == FRAME_LEVEL; }
+bool rules_map_open(void) { return playing_animatronic() && game_frame() == FRAME_LEVEL && !scare_on; }
 void rules_command(int zone) {
     command_seq++;
     command_zone = (uint8_t)zone;
@@ -169,12 +180,12 @@ static void row_write(const Row *r, int value) {
 /* Rule switches that depend on the player, kept up to date on every tick. */
 static void role_rules(const Output *o) {
     if (game_frame() != FRAME_LEVEL) return;
-    bool ghost = is_ghost();
+    bool ghost = is_ghost() && !scare_on;
     for (size_t i = 0; i < COUNT(ghost_off_level); i++) {
         if (ghost) evg_disable(ghost_off_level[i]);
         else evg_enable(ghost_off_level[i]);
     }
-    if (ghost || !host) evg_disable(400);
+    if (is_ghost() || !host) evg_disable(400);
     else evg_enable(400);
     if (mode == MODE_COOP && side == SIDE_EYES) {
         evg_disable(190);
@@ -228,6 +239,59 @@ static int station_of(int av0) {
     return STATION_CENTER;
 }
 
+static int trap_zone(int x, int y) {
+    for (int i = 0; i < TRAP_ZONES; i++) {
+        int zx, zy;
+        if (pos_read(obj(trap_zones[i]), &zx, &zy) && abs(x - zx) <= 2 && abs(y - zy) <= 2) return i;
+    }
+    return -1;
+}
+
+static int trap_roll(int from, int to) {
+    for (size_t i = 0; i < COUNT(trap_steps); i++)
+        if (trap_steps[i][0] == from && trap_steps[i][1] == to) return trap_steps[i][2];
+    return -1;
+}
+
+/* The game's rules take each step, for the footstep and the catch animation, or take over from a
+ * written position and walk him one stage past the host. A step that didn't land by the next tick
+ * is written, as is anything the rules can't reach in one step. */
+static void mirror_trap(const int32_t *v) {
+    static bool stepping;
+    static int steps, writes;
+    BYTE *trap = obj(L"plushtrap");
+    int x, y;
+    evg_disable(RULE_TRAP_CAUGHT);
+    if (!pos_read(trap, &x, &y)) return;
+    snprintf(debug_line, sizeof debug_line, "game=%d,%d host=%d,%d steps=%d writes=%d", x, y, v[M_X], v[M_Y], steps, writes);
+    if (x == v[M_X] && y == v[M_Y]) {
+        stepping = false;
+        return;
+    }
+    if (!stepping) {
+        int from = trap_zone(x, y), to = trap_zone(v[M_X], v[M_Y]);
+        if (from < 0) from = TRAP_CHAIR; /* he starts inside the chair's zone, off its exact spot */
+        int roll = trap_roll(from, to);
+        if (roll >= 0) {
+            if (roll > 0) cnt_set(L"random", roll);
+            cnt_set(L"move", 1);
+            stepping = true;
+            steps++;
+            return;
+        }
+        if (from == TRAP_HALL_1 && to == TRAP_CHAIR) {
+            evg_enable(RULE_TRAP_CAUGHT);
+            stepping = true;
+            steps++;
+            return;
+        }
+    }
+    stepping = false;
+    writes++;
+    cnt_set(L"move", 0);
+    pos_write(trap, v[M_X], v[M_Y]);
+}
+
 static int kill_kind(void) {
     if (obj(L"cupcake attack")) return KILL_CUPCAKE;
     if (obj(L"bonnie bedroom attack")) return KILL_BONNIE_BED;
@@ -268,9 +332,11 @@ void rules_read(Local *l) {
         forced_kind = KILL_NONE;
         last_av0 = -1;
         force_active = false;
+        scare_on = false;
         return;
     }
     l->in_level = true;
+    l->scaring = cnt_get(L"gameover", 0) > 0;
     l->station = is_ghost() ? STATION_NONE : station_of(av0);
     if (is_ghost()) {
         for (size_t i = 0; i < COUNT(night_rows); i++)
@@ -514,12 +580,21 @@ static void host_merge(const Output *o, const Local *l, uint32_t now) {
     }
 }
 
+/* The game ignores the walk-away zone while Shift or Ctrl is down, so a friend's key would pin this
+ * player in place. A cursor reaching the zone with the turn armed is the player leaving, so the
+ * friend's keys let go here, and the game's own rules carry the player away. */
+static bool walking_away(void) {
+    POINT at;
+    int armed = 1, x, y;
+    return av_read(obj(L"run back"), 0, &armed) && armed == 0 && cursor_get(&at) && overlay_view_point(at, &x, &y) && y >= WALK_AWAY_TOP && y < WALK_AWAY_BOTTOM;
+}
+
 /* A door held by a friend closes on this player's screen through the game's own animation. */
 static void shared_keys(const Output *o, const Local *l) {
     int frame = game_frame();
     bool shift = false, ctrl = false;
     if (frame == FRAME_PLUSHTRAP || frame == FRAME_BB) ctrl = o->others & IN_LIGHT;
-    if (l->in_level) {
+    if (l->in_level && !walking_away()) {
         int av0 = 0;
         av_read(obj(L"follow"), 0, &av0);
         /* Standing at the same spot as a friend, their light is yours too. */
@@ -531,10 +606,6 @@ static void shared_keys(const Output *o, const Local *l) {
         if ((av0 == AV0_RIGHT_PEEK || av0 == AV0_RIGHT_CLOSING || av0 == AV0_RIGHT_HOLD) && (o->others & IN_HOLD_RIGHT)) shift = true;
         if ((av0 == AV0_CLOSET_PEEK || av0 == AV0_CLOSET_CLOSING || av0 == AV0_CLOSET_HOLD) && (o->others & IN_HOLD_CLOSET)) shift = true;
     }
-    /* The game ignores the walk-away zone while Shift or Ctrl is down. A cursor resting there would
-     * fire the moment a friend lets go, so a shared key leaves the turn disarmed until it is
-     * armed again by moving the mouse up and back down. */
-    if (l->in_level && (shift || ctrl)) av_write(obj(L"run back"), 0, 1);
     key_force(VK_SHIFT_KEY, shift);
     key_force(VK_CTRL_KEY, ctrl);
 }
@@ -776,7 +847,7 @@ static void draw_hud(const Output *o, const Local *l, uint32_t now, OverlayScene
         hud_text(scene, 512, 392, ALIGN_CENTER, 0xB89A9A, "EYES TELLS YOU WHEN. HOLD CTRL.");
         return;
     }
-    if (!l->in_level) return;
+    if (!l->in_level || l->scaring) return;
     if (rules_map_open()) {
         draw_map(o, now, scene);
         return;
@@ -801,7 +872,7 @@ void rules_scene(const Output *o, const Local *l, uint32_t now, OverlayScene *sc
     last = now;
     if (dt > 200) dt = 200;
     draw_hud(o, l, now, scene);
-    if (!l->in_level || l->kill != KILL_NONE || rules_map_open()) {
+    if (!l->in_level || l->scaring || rules_map_open()) {
         left_open = right_open = closet_open = 1;
         return;
     }
@@ -881,6 +952,7 @@ void rules_apply(const Output *o, const Local *l, uint32_t now) {
     if (host && l->in_level && my_state != PLAYER_ALIVE) resume_needed = !o->team_lost;
     if (host && my_state == PLAYER_ALIVE && !away) resume_needed = false;
     if (away) return;
+    if (l->in_level && o->apply_kill != KILL_NONE) scare_on = true;
     role_rules(o);
     update_blocks(o, l, dt);
     if (is_ghost()) {
@@ -895,7 +967,7 @@ void rules_apply(const Output *o, const Local *l, uint32_t now) {
     }
     if (host && l->in_level && mode == MODE_EXTENDED) scale_difficulty(o->survivors);
     if (host && l->in_level && mode == MODE_VERSUS) versus_host(o, now);
-    if (!is_ghost() && o->apply_kill != KILL_NONE && l->in_level) rules_force_kill(o->apply_kill);
+    if (o->apply_kill != KILL_NONE && l->in_level) rules_force_kill(o->apply_kill);
     /* The host's copy of rule 400 ends in Foxy's kill. Mirroring would cancel that on a client and
      * leave it pushed off the bed each time, so a client runs the outcome itself. */
     if (!host && !is_ghost() && l->in_level && l->kill == KILL_NONE) {
@@ -909,16 +981,17 @@ void rules_apply(const Output *o, const Local *l, uint32_t now) {
             play_move_sounds(o->values);
             apply_rows(night_rows, COUNT(night_rows), o->values);
         } else if (frame == FRAME_PLUSHTRAP || frame == FRAME_BB) {
-            int x, y;
-            if (pos_read(obj(L"plushtrap"), &x, &y) && (x != o->values[M_X] || y != o->values[M_Y])) {
-                /* The game's own move rule plays the footstep for this step. */
-                cnt_set(L"random", o->values[M_RANDOM]);
-                cnt_set(L"move", 1);
-            }
-            apply_rows(mini_rows, COUNT(mini_rows), o->values);
+            /* The host zeroes this as its light comes on, and the same packet turns this player's light
+             * on. The game needs the old value for one frame to show what the light caught. */
+            static bool was_lit;
+            bool lit = o->others & IN_LIGHT;
+            for (size_t i = 0; i < M_X; i++)
+                if (i != M_ACTIVE || !lit || was_lit) row_write(&mini_rows[i], o->values[i]);
+            was_lit = lit;
+            mirror_trap(o->values);
         } else if (frame == FRAME_WHAT_NIGHT) {
             apply_rows(night_title_rows, COUNT(night_title_rows), o->values);
         }
     }
-    snprintf(debug_line, sizeof debug_line, "kill=%d force=%d others=%03x input=%03x grip=%d", l->kill, force_active, o->others, l->input, grip);
+    if (l->in_level) snprintf(debug_line, sizeof debug_line, "kill=%d force=%d others=%03x input=%03x grip=%d", l->kill, force_active, o->others, l->input, grip);
 }

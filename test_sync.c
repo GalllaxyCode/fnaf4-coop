@@ -311,6 +311,43 @@ static void test_animatronics_never_die_or_count(void) {
     run(200);
     CHECK(a[0].o.team_lost, "all survivors out did not end the night");
 }
+static void test_last_death_scares_everyone_before_the_night_ends(void) {
+    reset(LEVEL);
+    settings(MODE_VERSUS, true);
+    run(100);
+    a[0].l.side = a[2].l.side = a[3].l.side = SIDE_BONNIE;
+    run(100);
+    a[1].l.kill = KILL_BONNIE;
+    run(20);
+    CHECK(a[0].o.team_lost, "the last death did not lose the night");
+    CHECK(!a[0].o.end_night, "the night ended over the scare");
+    CHECK(a[0].kills_applied > 0, "the host's animatronic got no scare");
+    CHECK(a[2].kills_applied > 0, "a client's animatronic got no scare");
+    CHECK(a[1].frame == LEVEL, "the victim was moved during its scare");
+    run(400);
+    CHECK(a[0].o.end_night, "a scare that never finished held the night open");
+}
+static void test_a_leaver_ending_the_night_needs_no_scare(void) {
+    reset(LEVEL);
+    settings(MODE_VERSUS, true);
+    a[1].l.side = a[2].l.side = a[3].l.side = SIDE_FOXY;
+    run(200);
+    a[0].l.side = SIDE_BONNIE;
+    run(20);
+    CHECK(a[0].o.team_lost && a[0].o.end_night, "no survivors left, night still running");
+}
+static void test_a_ghost_keeps_its_scare_when_the_host_moves_on(void) {
+    reset(LEVEL);
+    settings(MODE_DEFAULT, true);
+    run(200);
+    a[1].l.scaring = true; /* out already, so it reports no kill */
+    a[0].frame = OVER;
+    run(20);
+    CHECK(a[1].frame == LEVEL, "moved during a scare");
+    a[1].l.scaring = false;
+    run(20);
+    CHECK(a[1].frame == OVER, "never followed after the scare");
+}
 static void test_commands_arrive_once(void) {
     reset(LEVEL);
     settings(MODE_VERSUS, false);
@@ -367,6 +404,9 @@ int main(void) {
             test_lost_host_stops_writes();
             test_settings_reach_clients();
             test_last_standing_keeps_the_night_going();
+            test_last_death_scares_everyone_before_the_night_ends();
+            test_a_leaver_ending_the_night_needs_no_scare();
+            test_a_ghost_keeps_its_scare_when_the_host_moves_on();
             test_rescue_saves_the_victim();
             test_missed_rescue_kills_everyone();
             test_a_light_elsewhere_does_not_rescue();

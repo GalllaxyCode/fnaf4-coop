@@ -282,6 +282,16 @@ HWND overlay_game_window(void) {
     return game;
 }
 
+bool overlay_view_point(POINT at, int *x, int *y) {
+    RECT r;
+    HWND window = overlay_game_window();
+    *x = *y = -1;
+    if (!window || !ScreenToClient(window, &at) || !GetClientRect(window, &r) || r.right <= 0 || r.bottom <= 0) return false;
+    *x = at.x * 1024 / r.right;
+    *y = at.y * 768 / r.bottom;
+    return true;
+}
+
 void overlay_hide(void) {
     if (win && visible) ShowWindow(win, SW_HIDE);
     visible = false;

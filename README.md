@@ -23,7 +23,7 @@ The host picks a mode in the CO-OP panel. In every mode, everyone stands in the 
 
 **Last one standing** can be switched on for any mode. A caught player is out and watches as a ghost while the night continues, and it ends once no survivors are left.
 
-A held door shuts for everyone, jumpscares are shared, and each player's name floats over where they are.
+A held door shuts for everyone, jumpscares are shared with everyone in the room, animatronic players and ghosts included, and each player's name floats over where they are. Standing with a friend at a door they hold or light, you share it, and moving the mouse down to walk away still works.
 
 ## Download
 
@@ -74,7 +74,6 @@ Problems are logged to `fnaf4coop.log` next to the exe. Over the internet, the h
 - The door panel in the room is drawn by the mod, not game art, and only shows after turning to the door.
 - Fredbear's laughs, ambience and the phone are random on each copy.
 - If the host dies with revive or Last one standing on, the night pauses for everyone while the host's game reloads.
-- After a held door or shared light, move the mouse up and back down to walk away.
 - Story minigames between nights follow the host's screen, but what happens in them is not shared.
 
 ## How it works

@@ -65,6 +65,7 @@ typedef struct {
     int station;
     uint16_t input;
     int kill; /* set once this player has died in the current attempt */
+    bool scaring; /* a jumpscare is playing here, whoever it belongs to */
     int side;
     int mode; /* host only */
     bool last_standing; /* host only */
@@ -101,7 +102,8 @@ typedef struct {
     int my_state;
     int battery;
     int survivors; /* alive and on the survivors' side, this player included */
-    bool team_lost; /* host: everyone is out, end the night */
+    bool team_lost; /* host: everyone is out */
+    bool end_night; /* host: go to the game over frame now */
     bool rescue;
     int rescue_station;
     int rescue_left_ms;
@@ -197,6 +199,7 @@ typedef struct {
     uint32_t rescued_ms;
     int rescued_slot;
     bool team_lost;
+    uint32_t team_lost_ms;
 
     /* client */
     bool have_host;

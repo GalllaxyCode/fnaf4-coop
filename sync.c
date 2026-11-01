@@ -108,6 +108,11 @@ static int count_survivors(const Sync *s, const Local *l, uint32_t now_ms, int e
     return n;
 }
 
+static void lose_team(Sync *s, uint32_t now_ms) {
+    if (!s->team_lost) s->team_lost_ms = now_ms;
+    s->team_lost = true;
+}
+
 static void set_state(Sync *s, int slot, int state) {
     if (slot < 0) s->my_state = state;
     else s->peers[slot].state = state;
@@ -126,7 +131,11 @@ static void player_died(Sync *s, const Local *l, int slot, int kind, int station
         set_state(s, slot, PLAYER_DOWN);
     } else if (l->last_standing) {
         set_state(s, slot, PLAYER_OUT);
-        if (others == 0) s->team_lost = true;
+        /* The last death is everyone's scare, and each copy leaves the night when it ends. */
+        if (others == 0) {
+            lose_team(s, now_ms);
+            s->kill = kind;
+        }
     } else {
         s->kill = kind;
     }
@@ -157,7 +166,7 @@ static void step_rescue(Sync *s, const Local *l, uint32_t now_ms, uint32_t dt) {
         s->rescue = false;
         if (l->last_standing) {
             set_state(s, s->rescue_slot, PLAYER_OUT);
-            if (count_survivors(s, l, now_ms, -2) == 0) s->team_lost = true;
+            if (count_survivors(s, l, now_ms, -2) == 0) lose_team(s, now_ms);
         } else {
             s->kill = s->rescue_kind;
         }
@@ -217,7 +226,7 @@ static void step_host(Sync *s, uint32_t now_ms, const Local *l, Output *out, Pac
         }
     }
     /* Someone who leaves can't be left standing in for the team. */
-    if (l->in_level && l->last_standing && !s->rescue && s->kill == KILL_NONE && count_survivors(s, l, now_ms, -2) == 0 && l->value_count > 0) s->team_lost = true;
+    if (l->in_level && l->last_standing && !s->rescue && s->kill == KILL_NONE && count_survivors(s, l, now_ms, -2) == 0 && l->value_count > 0) lose_team(s, now_ms);
     if (l->in_level && s->rescue) step_rescue(s, l, now_ms, dt);
     if (l->in_level && l->mode == MODE_EXTENDED) step_battery(s, l, now_ms, dt);
 
@@ -251,6 +260,7 @@ static void step_host(Sync *s, uint32_t now_ms, const Local *l, Output *out, Pac
     out->my_state = s->my_state;
     out->battery = s->battery;
     out->team_lost = s->team_lost;
+    out->end_night = s->team_lost && (s->kill == KILL_NONE || now_ms - s->team_lost_ms >= SYNC_FOLLOW_KILL_GRACE_MS);
     out->survivors = count_survivors(s, l, now_ms, -2);
     out->rescue = s->rescue;
     out->rescue_station = s->rescue_station;
@@ -290,7 +300,7 @@ static void step_client(Sync *s, uint32_t now_ms, const Local *l, Output *out, P
                 s->mismatch = true;
                 s->mismatch_ms = now_ms;
             }
-            uint32_t grace = h->kill != KILL_NONE || l->kill != KILL_NONE ? SYNC_FOLLOW_KILL_GRACE_MS : SYNC_FOLLOW_GRACE_MS;
+            uint32_t grace = h->kill != KILL_NONE || l->kill != KILL_NONE || l->scaring ? SYNC_FOLLOW_KILL_GRACE_MS : SYNC_FOLLOW_GRACE_MS;
             if (now_ms - s->mismatch_ms >= grace && (!s->sent_goto || now_ms - s->last_goto_ms >= SYNC_FOLLOW_RETRY_MS)) {
                 out->go_to_frame = true;
                 out->frame = h->frame;

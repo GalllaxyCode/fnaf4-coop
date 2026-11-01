@@ -63,6 +63,8 @@ static BOOL WINAPI hook_cursor(LPPOINT at) {
     return real_cursor(at);
 }
 
+bool cursor_get(POINT *at) { return real_cursor && hook_cursor(at); }
+
 void cursor_freeze(bool on) {
     if (on && !frozen && !bot_cursor && real_cursor) real_cursor(&frozen_at);
     frozen = on;

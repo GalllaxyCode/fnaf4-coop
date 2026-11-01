@@ -416,6 +416,7 @@ static void script_run(uint32_t elapsed, bool on_title) {
             pos_read(obj(L"living room center"), &cx, &cy);
             logline("dump ai=%d,%d,%d,%d bonnie_rel=%d,%d mark=%d danger=%d", cnt_get(L"Bonnie AI", -1), cnt_get(L"Chica AI", -1), cnt_get(L"Foxy AI", -1), cnt_get(L"Freddy AI", -1), bx - cx, by, cx, cnt_get(L"bonnie danger", -1));
         }
+        else if (strcmp(s->command, "front") == 0) SetForegroundWindow(overlay_game_window());
         else if (strcmp(s->command, "bg") == 0) test_background = s->value != 0;
         else if (strcmp(s->command, "turn") == 0) cnt_set(L"force turn", 1);
         else if (strcmp(s->command, "cur") == 0) {
@@ -492,9 +493,10 @@ static void log_state(uint32_t now, const Local *l, const Output *o) {
         pos_read(obj(L"foxy"), &fx, &fy);
     }
     if (l->frame == FRAME_PLUSHTRAP || l->frame == FRAME_BB) {
-        int px = 0, py = 0;
+        int px = 0, py = 0, view = -1;
         pos_read(obj(L"plushtrap"), &px, &py);
-        logline("mini frame=%d light=%d time=%d active=%d trap=%d,%d others=%03x", l->frame, cnt_get(L"light on", -1), cnt_get(L"Counter", -1), cnt_get(L"becoming active", -1), px, py, o->others);
+        av_read(obj(L"Active"), 0, &view);
+        logline("mini frame=%d light=%d time=%d active=%d trap=%d,%d view=%d others=%03x %s", l->frame, cnt_get(L"light on", -1), cnt_get(L"Counter", -1), cnt_get(L"becoming active", -1), px, py, view, o->others, sync_state.is_host ? "" : rules_debug());
         return;
     }
     logline("state frame=%d hour=%d night=%d av0=%d doors=%d/%d freddy=%d b=%d,%d c=%d,%d f=%d,%d players=%d bat=%d %s", l->frame, cnt_get(L"hour", -1), cnt_get(L"Night", -1), av0,
@@ -558,9 +560,11 @@ static void save_name(void) {
     WritePrivateProfileStringA("coop", "name", menu.name, cfg_ini);
 }
 
-static void log_room_changes(const Output *o) {
+static void log_room_changes(const Local *l, const Output *o) {
     static int mode = -1, state = -1, rescue = -1;
-    static bool standing;
+    static bool standing, scaring;
+    if (l->scaring != scaring) logline(l->scaring ? "scare started" : "scare over");
+    scaring = l->scaring;
     if (o->mode != mode || o->last_standing != standing) logline("mode %s, last one standing %s", menu_mode_name(o->mode), o->last_standing ? "on" : "off");
     if (o->my_state != state) logline("my state %d", o->my_state);
     if ((int)o->rescue != rescue) logline(o->rescue ? "rescue started: %s at station %d" : "no rescue running", o->rescue_name, o->rescue_station);
@@ -652,7 +656,7 @@ static void coop_tick(uint32_t now) {
             seen_mode = menu.mode;
         }
         rules_apply(&o, &l, now);
-        if (o.team_lost && !host_away && game_frame() == FRAME_LEVEL) {
+        if (o.end_night && !host_away && game_frame() == FRAME_LEVEL) {
             logline("everyone is out, the night is over");
             game_goto(FRAME_TEAM_LOST);
         }
@@ -667,7 +671,7 @@ static void coop_tick(uint32_t now) {
         }
         update_room_panel(&o, now);
         log_station(&l, &o);
-        log_room_changes(&o);
+        log_room_changes(&l, &o);
     } else if (l.frame == FRAME_TITLE && menu.open) {
         find_rooms(now);
     }
@@ -682,15 +686,6 @@ static void coop_tick(uint32_t now) {
     key_mute(game_input_blocked() || (in_room && rules_map_open()));
 
     if (cfg_test_mode) test_tick(now, &l, &o, level_ms);
-}
-
-static void view_from_screen(POINT at, int *x, int *y) {
-    RECT r;
-    HWND game = overlay_game_window();
-    *x = *y = -1;
-    if (!game || !ScreenToClient(game, &at) || !GetClientRect(game, &r) || r.right <= 0 || r.bottom <= 0) return;
-    *x = at.x * 1024 / r.right;
-    *y = at.y * 768 / r.bottom;
 }
 
 /* A click can arrive twice, once as a message and once from polling the button. */
@@ -731,7 +726,7 @@ static bool menu_message(const MSG *m) {
     if (in_background && m->message >= WM_MOUSEFIRST && m->message <= WM_MOUSELAST) return true;
     if (rules_map_open() && in_room) {
         if (m->message == WM_LBUTTONDOWN) {
-            view_from_screen(m->pt, &x, &y);
+            overlay_view_point(m->pt, &x, &y);
             rules_map_click(x, y, real_timeGetTime());
         }
         return (m->message >= WM_MOUSEFIRST && m->message <= WM_MOUSELAST) || m->message == WM_KEYDOWN || m->message == WM_KEYUP || m->message == WM_CHAR;
@@ -743,7 +738,7 @@ static bool menu_message(const MSG *m) {
         return blocked;
     case WM_LBUTTONDOWN:
     case WM_LBUTTONDBLCLK:
-        view_from_screen(m->pt, &x, &y);
+        overlay_view_point(m->pt, &x, &y);
         if (menu_press(x, y, "message")) {
             click_taken = true;
             return true;
@@ -794,7 +789,7 @@ static void poll_mouse(void) {
     int x, y;
     bool down = key_real(VK_LBUTTON);
     if (GetCursorPos(&at)) {
-        view_from_screen(at, &x, &y);
+        overlay_view_point(at, &x, &y);
         menu_mouse(&menu, x, y);
         if (down && !was_down) menu_press(x, y, "polling");
     }

@@ -58,6 +58,7 @@ void overlay_show(const OverlayScene *scene);
 void overlay_hide(void);
 #ifdef _WIN32
 HWND overlay_game_window(void);
+bool overlay_view_point(POINT at, int *x, int *y); /* a screen point in 1024x768 view coordinates */
 #endif
 /* Test only: saves the game's own window, with the overlay on top, as a bitmap file. */
 bool overlay_save(const char *path);

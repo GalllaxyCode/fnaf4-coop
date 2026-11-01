@@ -1,7 +1,7 @@
 # Five Nights at Freddy's 4: working notes
 
 Phase reached: 6 (shared night runs in the game on one Mac, two instances), no claim issue (owner declined), QA level `none`.
-Last updated 2026-10-31.
+Last updated 2026-11-01.
 
 ## Identity
 
@@ -133,9 +133,30 @@ Last updated 2026-10-31.
 - The game reads the mouse from GetCursorPos, so injected mouse_event moves don't reach its zones.
   Test scripts give each copy its own cursor through the GetCursorPos hook (`cur`).
 - Zones: `reset` y 464-656 arms the turn, `run back` y 682-762 fires it, both nearly full width.
-- Walk-away and bed-turn rules need Shift and Ctrl up. A friend's shared key held back a client's
-  pending turn, which fired on release and looked like following the host. Reproduced at a door and
-  on the bed. Shared keys now disarm the turn, and a host's turn leaves a client in place.
+- Walk-away and bed-turn rules need Shift and Ctrl up, so a friend's forced key pinned a player at a
+  door, the closet or the bed until the friend let go (reproduced with the light at a door, old
+  behaviour restored as a mutant). Forced keys now drop while the cursor is in `run back` with the turn
+  armed, and the game's own rules carry the player off. With the host still holding, a client left a
+  door lit (10-11), a door shut (21-22-11), the closet shut (29-30) and the bed lit (43-44). With the
+  cursor out of the zone, a host's release moved no one (21-22-10). This replaces disarming the turn.
+  A cursor left in the zone carries on to the bed after a door, as the rules read solo.
+- Plushtrap: the mirror wrote the host's position and set `move`, so the client's rules then stepped
+  him one stage on, every tick. Seen as game=890,588 against host=834,534 for 4 s, 159 rewrites in
+  30 s, with a footstep each. Clients now move him only through the rules (`move` with the `random`
+  the step needs, rule 20 for a catch) and write only if a step didn't land. Same run: 5 steps,
+  0 writes after the chair fix, 1 momentary difference in about 100 samples at 120 ms.
+- Reveal: the host zeroes `becoming active` in the same packet that turns the client's light on, so the
+  client missed the reveal (host view=3, client view=1, twice, as a mutant). Skipping that one write
+  gives view=3 on both, and a catch gives view=2 on both.
+- Scares, baseline: with Last one standing the host left at once and the victim, already a ghost,
+  got the 250 ms follow grace, cutting the scare at about 0.57 s of 0.97 s. With an animatronic host
+  and no Last one standing the night never ended on the host, and the client was pulled back and
+  killed about every 15 s. Animatronic copies never saw a scare at all.
+- Scares, fixed: a shared scare runs on everyone, animatronics and ghosts too, with the map and overlay
+  off, and each copy leaves through the game's own rule. Last one standing's last death is a shared
+  scare, and the host's goto waits for it, at most 5 s. Runs: Versus with and without Last one
+  standing with either side as host, kinds 1, 4, 5, 6, 7, 8, Default, and a full Last one standing
+  night. Every copy took 0.95-1.0 s. All scares were started by test scripts.
 - The night's map layer scrolls with each copy's own view: zones and threats shift by follow X - 512.
   Mirroring absolute X put threats in the wrong place when players faced different ways, in every
   build before modes. X now travels as a distance from `living room center`. Checked with players
@@ -172,7 +193,9 @@ Last updated 2026-10-31.
 - Two machines, or more than two real copies. macOS Local Network permission may block discovery
   between machines, and one Mac can't show that.
 - Real macOS clicks. Injected hardware events go through Wine's routing but skip macOS itself.
-- Play by a human with real mouse and keyboard. All real-game runs were test scripts.
+- Play by a human with real mouse and keyboard. All real-game runs were test scripts, and the
+  walk-away runs moved a per-copy test cursor, not a real macOS mouse.
+- A natural Versus kill, with a player walking an animatronic to the door. Scares there were injected.
 - In the real game, not yet run: flashlight scares (EV_SCARE_*), closet hold, remote bed view,
   remote listening, Foxy's closet run from a remote side, the BB minigame, Nights 5 and 6.
 - One old run with the host on Night 3 and the client on Night 2 left the host on the night frame
