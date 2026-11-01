@@ -26,7 +26,26 @@ static const Box name_field = {FIELD_X0, 176, FIELD_X1, 216};
 static const Box host_button = {FIELD_X0, 228, FIELD_X1, 272};
 static const Box address_field = {FIELD_X0, 548, FIELD_X1 - 112, 588};
 static const Box address_join = {FIELD_X1 - 100, 548, FIELD_X1, 588};
-static const Box leave_button = {FIELD_X0, 596, FIELD_X1, 640};
+static const Box leave_button = {FIELD_X0, 596, FIELD_X1 - 112, 640};
+static const Box github_button = {FIELD_X1 - 100, 596, FIELD_X1, 640};
+static const Box mode_prev = {FIELD_X0, 214, FIELD_X0 + 44, 254};
+static const Box mode_next = {FIELD_X1 - 44, 214, FIELD_X1, 254};
+static const Box standing_toggle = {FIELD_X0, 322, FIELD_X1, 362};
+static const Box side_prev = {FIELD_X0, 396, FIELD_X0 + 44, 436};
+static const Box side_next = {FIELD_X1 - 44, 396, FIELD_X1, 436};
+
+static const char *const mode_names[MODE_COUNT] = {"DEFAULT", "EXTENDED", "TRUE COOPERATIVE", "VERSUS"};
+static const char *const mode_lines[MODE_COUNT][2] = {
+    {"The normal game, in the same room.", "One death ends the night for everyone."},
+    {"Tougher animatronics, shared battery, tired arms.", "One team revive per night."},
+    {"EYES see but can't hear breathing.", "EARS hear but have no flashlight."},
+    {"Play as an animatronic, or survive them.", "Pick your side below."}};
+static const char *const side_names[MODE_COUNT][SIDE_COUNT] = {
+    {"", "", "", ""}, {"", "", "", ""}, {"EYES", "EARS", "", ""}, {"SURVIVOR", "BONNIE", "CHICA", "FOXY"}};
+
+const char *menu_mode_name(int mode) { return mode >= 0 && mode < MODE_COUNT ? mode_names[mode] : ""; }
+const char *menu_side_name(int mode, int side) { return mode >= 0 && mode < MODE_COUNT && side >= 0 && side < SIDE_COUNT ? side_names[mode][side] : ""; }
+int menu_side_count(int mode) { return mode == MODE_COOP ? 2 : mode == MODE_VERSUS ? SIDE_COUNT : 0; }
 
 static bool inside(const Box *b, int x, int y) { return x >= b->x0 && x < b->x1 && y >= b->y0 && y < b->y1; }
 
@@ -88,7 +107,7 @@ static void field(OverlayScene *s, const Menu *m, const Box *b, const char *valu
 
 static void draw_lobby(const Menu *m, const Lobby *lobby, uint32_t now_ms, OverlayScene *s) {
     int count = lobby_count(lobby);
-    text(s, FIELD_X0, 156, 1, ALIGN_LEFT, COLOR_DIM, "YOUR NAME");
+    text(s, FIELD_X0, 158, 1, ALIGN_LEFT, COLOR_DIM, "YOUR NAME");
     field(s, m, &name_field, m->name, "", m->focus == FOCUS_NAME, now_ms);
     button(s, m, &host_button, "HOST A ROOM");
     text(s, FIELD_X0, 294, 1, ALIGN_LEFT, COLOR_DIM, "ROOMS ON THIS WI-FI");
@@ -106,26 +125,51 @@ static void draw_lobby(const Menu *m, const Lobby *lobby, uint32_t now_ms, Overl
     button(s, m, &address_join, "JOIN");
 }
 
+static void draw_settings(const Menu *m, OverlayScene *s) {
+    int mid = (PANEL_X0 + PANEL_X1) / 2;
+    bool host = m->room == ROOM_HOSTING;
+    char line[OVERLAY_TEXT_LEN];
+    Box row = {FIELD_X0, 214, FIELD_X1, 254};
+    rect(s, &row, COLOR_FIELD, 255, 6);
+    text(s, mid, 225, 1, ALIGN_CENTER, COLOR_TEXT, mode_names[m->mode]);
+    if (host) {
+        button(s, m, &mode_prev, "<");
+        button(s, m, &mode_next, ">");
+    }
+    text(s, mid, 266, 1, ALIGN_CENTER, COLOR_DIM, mode_lines[m->mode][0]);
+    text(s, mid, 292, 1, ALIGN_CENTER, COLOR_DIM, mode_lines[m->mode][1]);
+    snprintf(line, sizeof line, "LAST ONE STANDING: %s", m->last_standing ? "ON" : "OFF");
+    if (host) {
+        button(s, m, &standing_toggle, line);
+    } else {
+        rect(s, &standing_toggle, COLOR_FIELD, 255, 6);
+        text(s, mid, 333, 1, ALIGN_CENTER, COLOR_TEXT, line);
+    }
+    if (menu_side_count(m->mode) > 0) {
+        Box side = {FIELD_X0, 396, FIELD_X1, 436};
+        text(s, mid, 374, 1, ALIGN_CENTER, COLOR_DIM, "YOUR SIDE");
+        rect(s, &side, COLOR_FIELD, 255, 6);
+        text(s, mid, 407, 1, ALIGN_CENTER, COLOR_TEXT, side_names[m->mode][m->side]);
+        button(s, m, &side_prev, "<");
+        button(s, m, &side_next, ">");
+    }
+}
+
 static void draw_room(const Menu *m, OverlayScene *s) {
     char line[OVERLAY_TEXT_LEN];
     int mid = (PANEL_X0 + PANEL_X1) / 2;
-    if (m->room == ROOM_HOSTING) {
-        text(s, mid, 170, 1, ALIGN_CENTER, COLOR_TEXT, "YOUR ROOM IS OPEN");
-        snprintf(line, sizeof line, "Address: %s", m->my_address);
-        text(s, mid, 214, 1, ALIGN_CENTER, COLOR_DIM, line);
-        text(s, mid, 360, 1, ALIGN_CENTER, COLOR_TEXT, "Close this panel and pick");
-        text(s, mid, 388, 1, ALIGN_CENTER, COLOR_TEXT, "New Game or Continue.");
-        text(s, mid, 416, 1, ALIGN_CENTER, COLOR_DIM, "Everyone follows you in.");
-    } else if (m->room == ROOM_JOINING) {
-        text(s, mid, 170, 1, ALIGN_CENTER, COLOR_TEXT, "CONNECTING...");
+    if (m->room == ROOM_JOINING) {
+        text(s, mid, 300, 1, ALIGN_CENTER, COLOR_TEXT, "CONNECTING...");
     } else {
-        snprintf(line, sizeof line, "IN %s'S ROOM", m->room_name);
-        text(s, mid, 170, 1, ALIGN_CENTER, COLOR_TEXT, line);
-        text(s, mid, 388, 1, ALIGN_CENTER, COLOR_DIM, "Waiting for the host to start.");
+        if (m->room == ROOM_HOSTING) snprintf(line, sizeof line, "YOUR ROOM - %s", m->my_address);
+        else snprintf(line, sizeof line, "%s'S ROOM", m->room_name);
+        text(s, mid, 146, 1, ALIGN_CENTER, COLOR_TEXT, line);
+        snprintf(line, sizeof line, "%d: %s", m->player_count, m->players);
+        text(s, mid, 178, 1, ALIGN_CENTER, COLOR_DIM, line);
+        draw_settings(m, s);
+        text(s, mid, 462, 1, ALIGN_CENTER, COLOR_DIM, m->room == ROOM_HOSTING ? "Close this and pick New Game or Continue." : "Waiting for the host to start.");
+        text(s, mid, 488, 1, ALIGN_CENTER, COLOR_DIM, "Everyone follows the host in.");
     }
-    snprintf(line, sizeof line, "Players: %d", m->player_count);
-    text(s, mid, 262, 1, ALIGN_CENTER, COLOR_TEXT, line);
-    text(s, mid, 290, 1, ALIGN_CENTER, COLOR_DIM, m->players);
     button(s, m, &leave_button, m->room == ROOM_HOSTING ? "CLOSE ROOM" : "LEAVE ROOM");
 }
 
@@ -144,6 +188,7 @@ void menu_draw(const Menu *m, const Lobby *lobby, uint32_t now_ms, OverlayScene 
     rect(s, &panel, COLOR_PANEL, 245, 12);
     text(s, PANEL_X0 + 28, PANEL_Y0 + 12, 2, ALIGN_LEFT, COLOR_TEXT, "CO-OP");
     button(s, m, &close_button, "X");
+    button(s, m, &github_button, "GITHUB");
     if (m->room == ROOM_NONE) draw_lobby(m, lobby, now_ms, s);
     else draw_room(m, s);
     if (m->status[0]) text(s, (PANEL_X0 + PANEL_X1) / 2, PANEL_Y1 - 16, 1, ALIGN_CENTER, 0xFFB060, m->status);
@@ -175,8 +220,24 @@ bool menu_click(Menu *m, const Lobby *lobby, int x, int y, MenuAction *action) {
         m->open = false;
         return true;
     }
+    if (inside(&github_button, x, y)) {
+        *action = ACTION_GITHUB;
+        return true;
+    }
     if (m->room != ROOM_NONE) {
+        int sides = menu_side_count(m->mode);
         if (inside(&leave_button, x, y)) *action = ACTION_LEAVE;
+        if (m->room == ROOM_HOSTING) {
+            if (inside(&mode_prev, x, y)) m->mode = (m->mode + MODE_COUNT - 1) % MODE_COUNT;
+            if (inside(&mode_next, x, y)) m->mode = (m->mode + 1) % MODE_COUNT;
+            if (inside(&standing_toggle, x, y)) m->last_standing = !m->last_standing;
+        }
+        sides = menu_side_count(m->mode);
+        if (sides > 0) {
+            if (inside(&side_prev, x, y)) m->side = (m->side + sides - 1) % sides;
+            if (inside(&side_next, x, y)) m->side = (m->side + 1) % sides;
+        }
+        if (m->side >= (sides > 0 ? sides : 1)) m->side = 0;
         return true;
     }
     if (inside(&name_field, x, y)) m->focus = FOCUS_NAME;

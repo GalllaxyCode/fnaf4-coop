@@ -177,6 +177,11 @@ void evg_disable(int index) {
     if (g) *(WORD *)(g + 4) |= EVG_INACTIVE;
 }
 
+void evg_enable(int index) {
+    BYTE *b = evg(index);
+    if (b) *(WORD *)(b + 4) &= (WORD)~EVG_INACTIVE;
+}
+
 bool evg_is_disabled(int index) {
     BYTE *g = evg(index);
     return g && (*(WORD *)(g + 4) & EVG_INACTIVE);

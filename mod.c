@@ -6,6 +6,7 @@
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
 #include <windows.h>
+#include <shellapi.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,6 +24,8 @@
 #define STATE_LOG_MS 1000
 #define MAX_SCRIPT 32
 #define FRAME_TITLE 1
+#define REPO_URL "https://github.com/GalllaxyCode/fnaf4-coop"
+#define FRAME_TEAM_LOST 4
 #define JOIN_TIMEOUT_MS 6000
 #define MAX_ADAPTERS 8
 
@@ -51,6 +54,7 @@ static uint32_t join_started_ms, last_announce_ms;
 static struct { uint32_t address, mask; } adapters[MAX_ADAPTERS];
 static int adapter_count;
 static HHOOK message_hook_handle;
+static bool in_background, test_background;
 static char cfg_ini[MAX_PATH], cfg_role[16], cfg_host[128];
 static int cfg_port, cfg_test_mode, cfg_test_skip_title, cfg_test_kill;
 static uint32_t last_tick;
@@ -229,6 +233,8 @@ static void room_leave(const char *status) {
     menu.room = ROOM_NONE;
     menu.player_count = 0;
     menu.players[0] = 0;
+    rules_setup(MODE_DEFAULT, 0);
+    rules_init(false);
     menu_set_status(&menu, status);
     key_force(16, false);
     key_force(17, false);
@@ -246,6 +252,7 @@ static void run_action(MenuAction action) {
     case ACTION_JOIN_ADDRESS: room_join_address(menu.address); break;
     case ACTION_LEAVE: room_leave(""); break;
     case ACTION_NAME_CHANGED: WritePrivateProfileStringA("coop", "name", menu.name, cfg_ini); break;
+    case ACTION_GITHUB: logline("opening the repo: %d", (int)(INT_PTR)ShellExecuteA(NULL, "open", REPO_URL, NULL, NULL, SW_SHOWNORMAL)); break;
     default: break;
     }
 }
@@ -400,6 +407,55 @@ static void script_run(uint32_t elapsed, bool on_title) {
                 mouse_event(MOUSEEVENTF_LEFTUP | MOUSEEVENTF_ABSOLUTE, ax, ay, 0, 0);
             }
         }
+        else if (strcmp(s->command, "side") == 0) menu.side = s->value;
+        else if (strcmp(s->command, "mode") == 0) menu.mode = s->value;
+        else if (strcmp(s->command, "ls") == 0) menu.last_standing = s->value != 0;
+        else if (strcmp(s->command, "zone") == 0) rules_command(s->value);
+        else if (strcmp(s->command, "dump") == 0) {
+            int bx = 0, by = 0, cx = 0, cy = 0;
+            pos_read(obj(L"Bonnie"), &bx, &by);
+            pos_read(obj(L"living room center"), &cx, &cy);
+            logline("dump ai=%d,%d,%d,%d bonnie_rel=%d,%d mark=%d danger=%d", cnt_get(L"Bonnie AI", -1), cnt_get(L"Chica AI", -1), cnt_get(L"Foxy AI", -1), cnt_get(L"Freddy AI", -1), bx - cx, by, cx, cnt_get(L"bonnie danger", -1));
+        }
+        else if (strcmp(s->command, "bg") == 0) test_background = s->value != 0;
+        else if (strcmp(s->command, "turn") == 0) cnt_set(L"force turn", 1);
+        else if (strcmp(s->command, "cur") == 0) {
+            RECT r;
+            HWND w = overlay_game_window();
+            if (w && GetClientRect(w, &r)) {
+                POINT at = {(s->value / 10000) * r.right / 1024, (s->value % 10000) * r.bottom / 768};
+                ClientToScreen(w, &at);
+                cursor_set(at.x, at.y);
+            }
+        }
+        else if (strcmp(s->command, "zones") == 0) {
+            static const wchar_t *const names[] = {L"run back", L"reset", L"run to left", L"run to center", L"run to right"};
+            for (int i = 0; i < 5; i++) {
+                int x = 0, y = 0, armed = -1;
+                BYTE *o = obj(names[i]);
+                pos_read(o, &x, &y);
+                av_read(o, 0, &armed);
+                logline("zone %d at %d,%d size %dx%d av0=%d found=%d", i, x, y, o ? *(int *)(o + 96) : 0, o ? *(int *)(o + 100) : 0, armed, o != NULL);
+            }
+        }
+        else if (strcmp(s->command, "zonelist") == 0) {
+            static const wchar_t *const z[] = {L"living room center", L"living room left", L"living room right", L"left hall far", L"left hall near", L"right hall far", L"right hall near", L"kitchen"};
+            for (int i = 0; i < 8; i++) {
+                int x = 0, y = 0;
+                pos_read(obj(z[i]), &x, &y);
+                logline("zone %d = %d,%d", i, x, y);
+            }
+        }
+        else if (strcmp(s->command, "rearm") == 0) av_write(obj(L"run back"), 0, 0);
+        else if (strcmp(s->command, "move") == 0) {
+            RECT r;
+            HWND w = overlay_game_window();
+            if (w && GetClientRect(w, &r)) {
+                POINT at = {(s->value / 10000) * r.right / 1024, (s->value % 10000) * r.bottom / 768};
+                ClientToScreen(w, &at);
+                mouse_event(MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE, (DWORD)(at.x * 65535 / (GetSystemMetrics(SM_CXSCREEN) - 1)), (DWORD)(at.y * 65535 / (GetSystemMetrics(SM_CYSCREEN) - 1)), 0, 0);
+            }
+        }
         else if (strcmp(s->command, "text") == 0) {
             HWND w = overlay_game_window();
             for (const char *c = s->text; *c; c++) PostMessageW(w, WM_CHAR, (WPARAM)(unsigned char)*c, 0);
@@ -442,8 +498,24 @@ static void log_state(uint32_t now, const Local *l, const Output *o) {
         logline("mini frame=%d light=%d time=%d active=%d trap=%d,%d others=%03x", l->frame, cnt_get(L"light on", -1), cnt_get(L"Counter", -1), cnt_get(L"becoming active", -1), px, py, o->others);
         return;
     }
-    logline("state frame=%d hour=%d night=%d av0=%d doors=%d/%d freddy=%d b=%d,%d c=%d,%d f=%d,%d players=%d %s", l->frame, cnt_get(L"hour", -1), cnt_get(L"Night", -1), av0,
-            cnt_get(L"left door shut", -1), cnt_get(L"right door shut", -1), cnt_get(L"Freddy counter", -1), bx, by, cx, cy, fx, fy, o->player_count, rules_debug());
+    logline("state frame=%d hour=%d night=%d av0=%d doors=%d/%d freddy=%d b=%d,%d c=%d,%d f=%d,%d players=%d bat=%d %s", l->frame, cnt_get(L"hour", -1), cnt_get(L"Night", -1), av0,
+            cnt_get(L"left door shut", -1), cnt_get(L"right door shut", -1), cnt_get(L"Freddy counter", -1), bx, by, cx, cy, fx, fy, o->player_count, o->battery, rules_debug());
+}
+
+/* Every move in the room goes in the log, so a report from a real game can be traced. */
+static void log_station(const Local *l, const Output *o) {
+    static int last_av0 = -1, lines;
+    int av0 = -1, armed = -1;
+    if (!l->in_level) {
+        last_av0 = -1;
+        return;
+    }
+    av_read(obj(L"follow"), 0, &av0);
+    if (av0 == last_av0 || lines >= 4000) return;
+    av_read(obj(L"run back"), 0, &armed);
+    logline("av0 %d -> %d armed=%d input=%03x others=%03x", last_av0, av0, armed == 0, l->input, o->others);
+    last_av0 = av0;
+    lines++;
 }
 
 static void update_room_panel(const Output *o, uint32_t now) {
@@ -478,6 +550,18 @@ static bool game_input_blocked(void) {
     return menu.open || menu.room == ROOM_JOINING || menu.room == ROOM_JOINED;
 }
 
+static void log_room_changes(const Output *o) {
+    static int mode = -1, state = -1, rescue = -1;
+    static bool standing;
+    if (o->mode != mode || o->last_standing != standing) logline("mode %s, last one standing %s", menu_mode_name(o->mode), o->last_standing ? "on" : "off");
+    if (o->my_state != state) logline("my state %d", o->my_state);
+    if ((int)o->rescue != rescue) logline(o->rescue ? "rescue started: %s at station %d" : "no rescue running", o->rescue_name, o->rescue_station);
+    mode = o->mode;
+    standing = o->last_standing;
+    state = o->my_state;
+    rescue = o->rescue;
+}
+
 static void test_tick(uint32_t now, const Local *l, const Output *o, uint32_t level_ms) {
     static uint32_t title_ms, first_title;
     if (cfg_test_skip_title && l->frame == FRAME_TITLE) {
@@ -498,6 +582,7 @@ static void test_tick(uint32_t now, const Local *l, const Output *o, uint32_t le
 }
 
 static void poll_mouse(void);
+static void update_background(void);
 
 static void coop_tick(uint32_t now) {
     static int last_frame = -1;
@@ -512,9 +597,16 @@ static void coop_tick(uint32_t now) {
     memset(&l, 0, sizeof l);
     memset(&o, 0, sizeof o);
     l.frame = game_frame();
+    bool host_away = false;
     if (in_room) {
+        rules_setup(menu.mode, menu.side);
         rules_frame();
         rules_read(&l);
+        l.mode = menu.mode;
+        l.last_standing = menu.last_standing;
+        host_away = rules_host_resume(&l, now);
+        l.mode = menu.mode;
+        l.last_standing = menu.last_standing;
     }
     if (l.frame != last_frame) {
         logline("frame %d (%d rules)", l.frame, evg_count());
@@ -527,8 +619,9 @@ static void coop_tick(uint32_t now) {
         was_level = l.in_level;
         if (l.in_level) {
             level_ms = now;
+            /* A client rejoining the same night must not replay its script. */
             for (int i = 0; i < script_count; i++)
-                if (!script[i].on_title) script[i].done = false;
+                if (!script[i].on_title && (sync_state.is_host || !in_room)) script[i].done = false;
         }
         cfg_test_kill = 0;
     }
@@ -541,7 +634,20 @@ static void coop_tick(uint32_t now) {
             announce_room(now, 1 + o.player_count);
             find_rooms(now);
         }
+        if (!sync_state.is_host) {
+            menu.mode = o.mode;
+            menu.last_standing = o.last_standing;
+            if (menu.side >= (menu_side_count(menu.mode) > 0 ? menu_side_count(menu.mode) : 1)) menu.side = 0;
+            /* The host starts as EYES, so a client starts as EARS and someone can always hear. */
+            static int seen_mode;
+            if (menu.mode == MODE_COOP && seen_mode != MODE_COOP) menu.side = SIDE_EARS;
+            seen_mode = menu.mode;
+        }
         rules_apply(&o, &l, now);
+        if (o.team_lost && !host_away && game_frame() == FRAME_LEVEL) {
+            logline("everyone is out, the night is over");
+            game_goto(FRAME_TEAM_LOST);
+        }
         if (o.go_to_frame) {
             logline("following the host to frame %d", o.frame);
             game_goto(o.frame);
@@ -552,16 +658,19 @@ static void coop_tick(uint32_t now) {
             logged = o.apply_kill;
         }
         update_room_panel(&o, now);
+        log_station(&l, &o);
+        log_room_changes(&o);
     } else if (l.frame == FRAME_TITLE && menu.open) {
         find_rooms(now);
     }
 
-    if (l.frame == FRAME_TITLE) poll_mouse();
+    update_background();
+    if (l.frame == FRAME_TITLE && !in_background) poll_mouse();
     memset(&scene, 0, sizeof scene);
     if (in_room) rules_scene(&o, &l, now, &scene);
     if (l.frame == FRAME_TITLE) menu_draw(&menu, &lobby, now, &scene);
     overlay_show(&scene);
-    key_mute(game_input_blocked());
+    key_mute(game_input_blocked() || (in_room && rules_map_open()));
 
     if (cfg_test_mode) test_tick(now, &l, &o, level_ms);
 }
@@ -590,10 +699,34 @@ static bool menu_press(int x, int y, const char *source) {
     return last_taken;
 }
 
+/* Two copies on one Mac share a cursor, and every copy would act on it. A copy in the background
+ * leaves the mouse alone. This only starts once the game has seen itself in front, so a failed
+ * check can never take the mouse away from a game that is being played. */
+static void update_background(void) {
+    static bool seen_front;
+    HWND front = GetForegroundWindow();
+    DWORD owner = 0;
+    if (front) GetWindowThreadProcessId(front, &owner);
+    bool ours = owner == GetCurrentProcessId();
+    if (ours) seen_front = true;
+    bool now_background = test_background || (seen_front && !ours);
+    if (now_background != in_background) logline(now_background ? "in the background, ignoring the mouse" : "in front");
+    in_background = now_background;
+    cursor_freeze(in_background);
+}
+
 /* Returns true when the message belongs to the panel and the game must not see it. */
 static bool menu_message(const MSG *m) {
     MenuAction action = ACTION_NONE;
     int x, y;
+    if (in_background && m->message >= WM_MOUSEFIRST && m->message <= WM_MOUSELAST) return true;
+    if (rules_map_open() && in_room) {
+        if (m->message == WM_LBUTTONDOWN) {
+            view_from_screen(m->pt, &x, &y);
+            rules_map_click(x, y, real_timeGetTime());
+        }
+        return (m->message >= WM_MOUSEFIRST && m->message <= WM_MOUSELAST) || m->message == WM_KEYDOWN || m->message == WM_KEYUP || m->message == WM_CHAR;
+    }
     if (game_frame() != FRAME_TITLE) return false;
     bool blocked = game_input_blocked();
     switch (m->message) {

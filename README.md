@@ -10,14 +10,20 @@ Shared-night co-op for the Steam version of Five Nights at Freddy's 4, on macOS 
 
 This is an early build. It has been played by test bots, not yet by people, so expect bugs. Bug reports with `fnaf4coop.log` from each player are very welcome.
 
-## How it plays
+## Game modes
 
-- When the host loads a night, every client loads it too, whatever night their own save is on.
-- The host runs the animatronics, Freddy, the clock and the minigame. Clients mirror them.
-- A door held by anyone is shut for everyone. If you are at that door, it closes on your screen. If you have turned to face it from the bed, a door panel swings shut over the opening.
-- Each player's name floats over where they are, with `< >` or `v` when that spot is out of view.
-- A jumpscare on anyone plays on everyone, using the same scare.
-- In the Plushtrap and BB minigames, anyone's Ctrl lights the hall on every screen.
+The host picks a mode in the CO-OP panel. In every mode, everyone stands in the same room and faces the same animatronics.
+
+| Mode | What changes |
+|---|---|
+| **Default** | The normal game, shared. One death ends the night for everyone. |
+| **Extended** | Animatronics get tougher with each player. The team shares one flashlight battery. Holding a door tires your arms, and sharing a door makes it last twice as long. One team revive per night: when someone is taken, a friend has 12 seconds to light the spot where it happened. |
+| **True cooperative** | Each player picks a side. EYES have the flashlight but can't hear breathing. EARS hear it but have no flashlight. In the Plushtrap and BB minigames, EARS hold the light with a blank screen, and EYES tell them when. |
+| **Versus** | Each player picks Survivor, Bonnie, Chica or Foxy. Animatronic players move on a map of the house, replacing that character's AI. |
+
+**Last one standing** can be switched on for any mode. A caught player is out and watches as a ghost while the night continues, and it ends once no survivors are left.
+
+A held door shuts for everyone, jumpscares are shared, and each player's name floats over where they are.
 
 ## Download
 
@@ -67,6 +73,8 @@ Problems are logged to `fnaf4coop.log` next to the exe. Over the internet, the h
 - Names show Latin letters only, others appear as `?`. Two players with the same name hide each other.
 - The door panel in the room is drawn by the mod, not game art, and only shows after turning to the door.
 - Fredbear's laughs, ambience and the phone are random on each copy.
+- If the host dies with revive or Last one standing on, the night pauses for everyone while the host's game reloads.
+- After a held door or shared light, move the mouse up and back down to walk away.
 - Story minigames between nights follow the host's screen, but what happens in them is not shared.
 
 ## How it works

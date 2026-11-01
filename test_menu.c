@@ -98,6 +98,56 @@ static void test_join_paths(void) {
     CHECK(act == ACTION_JOIN_ADDRESS, "address join action %d", act);
 }
 
+static void test_room_settings(void) {
+    Menu m;
+    Lobby l;
+    MenuAction act;
+    lobby_clear(&l);
+    menu_init(&m, "x");
+    m.open = true;
+    m.room = ROOM_HOSTING;
+    menu_click(&m, &l, 720, 230, &act);
+    CHECK(m.mode == MODE_EXTENDED, "next mode %d", m.mode);
+    menu_click(&m, &l, 300, 230, &act);
+    menu_click(&m, &l, 300, 230, &act);
+    CHECK(m.mode == MODE_VERSUS, "previous wraps to %d", m.mode);
+    menu_click(&m, &l, 500, 340, &act);
+    CHECK(m.last_standing, "toggle did not switch on");
+    menu_click(&m, &l, 720, 410, &act);
+    menu_click(&m, &l, 720, 410, &act);
+    menu_click(&m, &l, 720, 410, &act);
+    CHECK(m.side == SIDE_FOXY, "side %d", m.side);
+    menu_click(&m, &l, 720, 230, &act);
+    CHECK(m.mode == MODE_DEFAULT && m.side == 0, "side kept in a mode without sides: %d", m.side);
+    m.room = ROOM_JOINED;
+    menu_click(&m, &l, 720, 230, &act);
+    menu_click(&m, &l, 500, 340, &act);
+    CHECK(m.mode == MODE_DEFAULT && m.last_standing, "client changed room settings");
+    m.mode = MODE_COOP;
+    menu_click(&m, &l, 720, 410, &act);
+    CHECK(m.side == SIDE_EARS, "client could not pick a side: %d", m.side);
+    OverlayScene s;
+    memset(&s, 0, sizeof s);
+    menu_draw(&m, &l, 0, &s);
+    CHECK(s.text_count < OVERLAY_MAX_TEXTS && s.rect_count < OVERLAY_MAX_RECTS, "draw overflow %d %d", s.text_count, s.rect_count);
+}
+
+static void test_github_button(void) {
+    Menu m;
+    Lobby l;
+    MenuAction act;
+    lobby_clear(&l);
+    menu_init(&m, "x");
+    m.open = true;
+    menu_click(&m, &l, 690, 618, &act);
+    CHECK(act == ACTION_GITHUB, "lobby github action %d", act);
+    m.room = ROOM_HOSTING;
+    menu_click(&m, &l, 690, 618, &act);
+    CHECK(act == ACTION_GITHUB, "room github action %d", act);
+    menu_click(&m, &l, 600, 618, &act);
+    CHECK(act == ACTION_LEAVE, "leave still works next to it: %d", act);
+}
+
 static void test_room_screen(void) {
     Menu m;
     Lobby l;
@@ -123,6 +173,8 @@ int main(void) {
     test_names();
     test_panel_flow();
     test_join_paths();
+    test_room_settings();
+    test_github_button();
     test_room_screen();
     printf("%d menu checks, %d failures\n", checks, failures);
     return failures != 0;

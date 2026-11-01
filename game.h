@@ -33,6 +33,7 @@ int evg_count(void);
 BYTE *evg(int index);
 BYTE *evg_base(void);
 void evg_disable(int index);
+void evg_enable(int index);
 bool evg_is_disabled(int index);
 BYTE *cond_at(BYTE *group, int index);
 BYTE *act_at(BYTE *group, int index);

@@ -7,7 +7,7 @@
 #include <stdint.h>
 
 #define SYNC_MAGIC 0x4F433446u /* "F4CO" */
-#define SYNC_VERSION 2
+#define SYNC_VERSION 3
 #define SYNC_MAX_PEERS 7
 #define SYNC_MAX_PLAYERS (SYNC_MAX_PEERS + 1)
 #define SYNC_NAME_LEN 16
@@ -17,6 +17,22 @@
 #define SYNC_FOLLOW_GRACE_MS 250
 #define SYNC_FOLLOW_KILL_GRACE_MS 5000 /* lets a jumpscare finish before a client is moved */
 #define SYNC_FOLLOW_RETRY_MS 1500
+
+/* Rescue: a friend has this long to reach the spot and keep a light on it. */
+#define SYNC_RESCUE_MS 12000
+#define SYNC_RESCUE_HOLD_MS 1500
+#define SYNC_RESCUE_GRACE_MS 6000 /* a rescued player's old death report is ignored for this long */
+/* Shared flashlight battery, per thousand. */
+#define SYNC_BATTERY_FULL 1000
+#define SYNC_BATTERY_DRAIN 20 /* per second, for each light in use */
+#define SYNC_BATTERY_CHARGE 5 /* per second, while no light is on */
+
+enum { MODE_DEFAULT, MODE_EXTENDED, MODE_COOP, MODE_VERSUS, MODE_COUNT };
+/* What a player chose in the room. True cooperative uses the first two, Versus uses the survivor and the
+ * three animatronics. */
+enum { SIDE_EYES = 0, SIDE_EARS = 1 };
+enum { SIDE_SURVIVOR = 0, SIDE_BONNIE = 1, SIDE_CHICA = 2, SIDE_FOXY = 3, SIDE_COUNT };
+enum { PLAYER_ALIVE, PLAYER_DOWN, PLAYER_OUT };
 
 /* Where a player is in the room. */
 enum { STATION_NONE, STATION_CENTER, STATION_LEFT, STATION_RIGHT, STATION_CLOSET, STATION_BED };
@@ -49,6 +65,11 @@ typedef struct {
     int station;
     uint16_t input;
     int kill; /* set once this player has died in the current attempt */
+    int side;
+    int mode; /* host only */
+    bool last_standing; /* host only */
+    uint8_t command_seq; /* an animatronic player's latest move */
+    uint8_t command_zone;
     bool events[EV_COUNT];
     int value_count;
     int32_t values[SYNC_VALUES];
@@ -58,6 +79,8 @@ typedef struct {
     bool used;
     int station;
     uint16_t input;
+    int side;
+    int state;
     char name[SYNC_NAME_LEN];
 } Player;
 
@@ -73,6 +96,18 @@ typedef struct {
     int player_count;
     Player players[SYNC_MAX_PLAYERS]; /* everyone but this player */
     bool host_lost;
+    int mode;
+    bool last_standing;
+    int my_state;
+    int battery;
+    int survivors; /* alive and on the survivors' side, this player included */
+    bool team_lost; /* host: everyone is out, end the night */
+    bool rescue;
+    int rescue_station;
+    int rescue_left_ms;
+    char rescue_name[SYNC_NAME_LEN];
+    int command_count; /* host: moves from animatronic players */
+    struct { int side, zone; } commands[SYNC_MAX_PEERS];
 } Output;
 
 typedef struct {
@@ -91,13 +126,26 @@ typedef struct {
     uint8_t event_counts[EV_COUNT];
     uint8_t player_count;
     uint8_t closing; /* the sender is leaving the room */
+    uint8_t mode;
+    uint8_t last_standing;
+    uint8_t side;
+    uint8_t state;
+    uint8_t rescue;
+    uint8_t rescue_station;
+    uint8_t command_seq;
+    uint8_t command_zone;
     uint8_t pad;
+    uint16_t battery;
+    uint16_t rescue_left_ms;
+    char rescue_name[SYNC_NAME_LEN];
     char name[SYNC_NAME_LEN];
     int32_t values[SYNC_VALUES];
     struct {
         uint8_t station;
-        uint8_t pad;
+        uint8_t side;
         uint16_t input;
+        uint8_t state;
+        uint8_t pad[3];
         char name[SYNC_NAME_LEN];
     } players[SYNC_MAX_PLAYERS];
 } Packet;
@@ -111,6 +159,12 @@ typedef struct {
     uint16_t input;
     int kill;
     uint32_t kill_epoch;
+    int side;
+    int state;
+    int safe_station; /* where the player last was before dying */
+    bool have_command;
+    uint8_t command_seq;
+    uint8_t pending_command; /* zone + 1 */
     char name[SYNC_NAME_LEN];
     bool have_events;
     uint8_t event_counts[EV_COUNT];
@@ -128,6 +182,21 @@ typedef struct {
     int kill;
     bool was_in_level;
     Peer peers[SYNC_MAX_PEERS];
+    int my_state;
+    int my_safe_station;
+    uint32_t last_step_ms;
+    int battery;
+    int charge_left; /* thousandths left over between steps */
+    bool revive_used;
+    bool rescue;
+    int rescue_slot; /* -1 is the host */
+    int rescue_station;
+    int rescue_kind;
+    uint32_t rescue_deadline_ms;
+    uint32_t rescue_held_ms;
+    uint32_t rescued_ms;
+    int rescued_slot;
+    bool team_lost;
 
     /* client */
     bool have_host;

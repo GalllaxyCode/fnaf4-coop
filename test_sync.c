@@ -12,7 +12,7 @@
 typedef struct { int to, from; uint32_t at; Packet p; bool used; } Msg;
 typedef struct {
     Sync s; Local l; Output o;
-    int frame; int kill_seen; int kills_applied; int frame_jumps; int threat; int event_hits[EV_COUNT];
+    int frame; int place; int kill_seen; int kills_applied; int frame_jumps; int threat; int event_hits[EV_COUNT];
 } Actor;
 static Actor a[PLAYERS];
 static Msg q[QUEUE];
@@ -55,7 +55,7 @@ static void step(uint32_t dt) {
         Packet out;
         p->l.frame = p->frame;
         p->l.in_level = p->frame == LEVEL;
-        p->l.station = STATION_CENTER;
+        p->l.station = p->place ? p->place : STATION_CENTER;
         p->l.value_count = p->frame == LEVEL ? 2 : 0;
         if (i == 0 && p->frame == LEVEL) {
             p->threat += 3;
@@ -199,6 +199,136 @@ static void test_leaving_is_noticed_at_once(void) {
     sync_step(&client, 70, &l, &o, &from_client);
     CHECK(o.host_lost, "closed room not noticed");
 }
+/* Modes: `settings` applies to the host, each case runs over the lossy network. */
+static void settings(int mode, bool last_standing) {
+    a[0].l.mode = mode;
+    a[0].l.last_standing = last_standing;
+}
+static int state_of(int player) {
+    if (player == 0) return a[0].o.my_state;
+    return a[player].o.my_state;
+}
+static void test_settings_reach_clients(void) {
+    reset(LEVEL);
+    settings(MODE_VERSUS, true);
+    a[2].l.side = SIDE_FOXY;
+    run(200);
+    CHECK(a[1].o.mode == MODE_VERSUS && a[1].o.last_standing, "client mode %d", a[1].o.mode);
+    bool seen = false;
+    for (int i = 0; i < a[1].o.player_count; i++)
+        if (strcmp(a[1].o.players[i].name, "p2") == 0) seen = a[1].o.players[i].side == SIDE_FOXY;
+    CHECK(seen, "client missed another player's side");
+}
+static void test_last_standing_keeps_the_night_going(void) {
+    reset(LEVEL);
+    settings(MODE_DEFAULT, true);
+    run(200);
+    a[1].l.kill = KILL_BONNIE;
+    run(200);
+    CHECK(state_of(1) == PLAYER_OUT, "victim state %d", state_of(1));
+    CHECK(a[1].l.kill == KILL_BONNIE, "victim lost its kill");
+    for (int i = 0; i < PLAYERS; i++) if (i != 1) CHECK(a[i].l.kill == KILL_NONE, "player %d got the scare", i);
+    CHECK(a[0].o.survivors == PLAYERS - 1, "survivors %d", a[0].o.survivors);
+    a[1].l.kill = KILL_NONE; /* it reloaded */
+    a[0].l.kill = KILL_FOXY;
+    a[2].l.kill = KILL_FOXY;
+    run(200);
+    CHECK(!a[0].o.team_lost, "lost with one player left");
+    a[3].l.kill = KILL_CHICA;
+    run(200);
+    CHECK(a[0].o.team_lost, "last death did not end the night");
+}
+static void test_rescue_saves_the_victim(void) {
+    reset(LEVEL);
+    settings(MODE_EXTENDED, false);
+    a[1].place = STATION_LEFT;
+    run(200);
+    a[1].l.kill = KILL_BONNIE;
+    a[1].place = STATION_NONE;
+    run(40);
+    CHECK(a[2].o.rescue && a[2].o.rescue_station == STATION_LEFT, "rescue %d at %d", a[2].o.rescue, a[2].o.rescue_station);
+    CHECK(state_of(1) == PLAYER_DOWN, "victim state %d", state_of(1));
+    a[1].l.kill = KILL_NONE;
+    a[2].place = STATION_LEFT;
+    a[2].l.input = IN_VIEW_LEFT;
+    run(100);
+    a[2].l.input = 0;
+    run(60);
+    CHECK(!a[0].o.rescue, "rescue never ended");
+    CHECK(state_of(1) == PLAYER_ALIVE, "victim not back: %d", state_of(1));
+    CHECK(a[3].l.kill == KILL_NONE, "scare after a rescue");
+    a[3].l.kill = KILL_CHICA; /* the revive is spent */
+    run(300);
+    for (int i = 0; i < PLAYERS; i++) CHECK(a[i].l.kill != KILL_NONE, "second death spared player %d", i);
+}
+static void test_missed_rescue_kills_everyone(void) {
+    reset(LEVEL);
+    settings(MODE_EXTENDED, false);
+    run(200);
+    a[1].l.kill = KILL_CUPCAKE;
+    run(60);
+    a[1].l.kill = KILL_NONE;
+    run(SYNC_RESCUE_MS / 50 + 120);
+    for (int i = 0; i < PLAYERS; i++) CHECK(a[i].l.kill == KILL_CUPCAKE, "player %d kill %d", i, a[i].l.kill);
+}
+static void test_a_light_elsewhere_does_not_rescue(void) {
+    reset(LEVEL);
+    settings(MODE_EXTENDED, true);
+    a[1].place = STATION_LEFT;
+    run(200);
+    a[1].l.kill = KILL_BONNIE;
+    a[1].place = STATION_NONE;
+    a[2].place = STATION_RIGHT;
+    a[2].l.input = IN_VIEW_RIGHT;
+    run(SYNC_RESCUE_MS / 50 + 120);
+    CHECK(state_of(1) == PLAYER_OUT, "wrong spot rescued, state %d", state_of(1));
+}
+static void test_battery_runs_down_and_recovers(void) {
+    reset(LEVEL);
+    settings(MODE_EXTENDED, false);
+    run(20);
+    CHECK(a[0].o.battery == SYNC_BATTERY_FULL, "battery starts at %d", a[0].o.battery);
+    a[0].l.input = IN_VIEW_LEFT;
+    a[1].l.input = IN_VIEW_RIGHT;
+    run(20 * 30);
+    CHECK(a[0].o.battery == 0, "two lights for 30 s left %d", a[0].o.battery);
+    a[0].l.input = a[1].l.input = 0;
+    run(20 * 10);
+    CHECK(a[0].o.battery >= 45 && a[0].o.battery <= 55, "recharge gave %d", a[0].o.battery);
+    CHECK(a[2].o.battery > 0, "client battery %d", a[2].o.battery);
+}
+static void test_animatronics_never_die_or_count(void) {
+    reset(LEVEL);
+    settings(MODE_VERSUS, true);
+    a[1].l.side = SIDE_BONNIE;
+    run(200);
+    CHECK(a[0].o.survivors == PLAYERS - 1, "survivors %d", a[0].o.survivors);
+    a[1].l.kill = KILL_FOXY;
+    run(100);
+    CHECK(state_of(1) == PLAYER_ALIVE, "animatronic died");
+    a[1].l.kill = KILL_NONE;
+    a[0].l.kill = a[2].l.kill = a[3].l.kill = KILL_FOXY;
+    run(200);
+    CHECK(a[0].o.team_lost, "all survivors out did not end the night");
+}
+static void test_commands_arrive_once(void) {
+    reset(LEVEL);
+    settings(MODE_VERSUS, false);
+    a[1].l.side = SIDE_CHICA;
+    run(200);
+    int moves = 0, zone = -1;
+    a[1].l.command_seq = 1;
+    a[1].l.command_zone = 5;
+    for (int i = 0; i < 200; i++) {
+        step(50);
+        for (int c = 0; c < a[0].o.command_count; c++) {
+            moves++;
+            zone = a[0].o.commands[c].zone;
+            CHECK(a[0].o.commands[c].side == SIDE_CHICA, "command side %d", a[0].o.commands[c].side);
+        }
+    }
+    CHECK(moves == 1 && zone == 5, "moves %d zone %d", moves, zone);
+}
 static void test_bad_packets(void) {
     Sync s; Packet p; memset(&p, 0, sizeof p);
     sync_init(&s, false, 1, "x");
@@ -235,6 +365,14 @@ int main(void) {
             test_client_scare_finishes_before_it_is_moved();
             test_events_apply_exactly_once();
             test_lost_host_stops_writes();
+            test_settings_reach_clients();
+            test_last_standing_keeps_the_night_going();
+            test_rescue_saves_the_victim();
+            test_missed_rescue_kills_everyone();
+            test_a_light_elsewhere_does_not_rescue();
+            test_battery_runs_down_and_recovers();
+            test_animatronics_never_die_or_count();
+            test_commands_arrive_once();
         }
     }
     test_bad_packets();

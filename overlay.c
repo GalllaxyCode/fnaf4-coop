@@ -251,6 +251,11 @@ static void draw_quad(const OverlayQuad *q, double sx, double sy) {
             double edge_top = q->y[0] + (q->y[1] - q->y[0]) * u, edge_bottom = q->y[3] + (q->y[2] - q->y[3]) * u;
             double v = (vy - edge_top) / (edge_bottom - edge_top);
             double light = 1.0 - 0.28 * v;
+            if (q->louver) {
+                light *= (int)(v * 44) % 2 ? 0.74 : 1.0;
+                blend(x, y, (unsigned)(((q->color >> 16) & 255) * light) << 16 | (unsigned)(((q->color >> 8) & 255) * light) << 8 | (unsigned)((q->color & 255) * light), q->alpha);
+                continue;
+            }
             double panel_u = u < 0.5 ? (u - 0.1) / 0.32 : (u - 0.58) / 0.32;
             double panel_v = v < 0.42 ? (v - 0.06) / 0.32 : (v - 0.47) / 0.46;
             if (panel_u > 0 && panel_u < 1 && panel_v > 0 && panel_v < 1) {

@@ -10,7 +10,7 @@
 #define MENU_STATUS_LEN 60
 
 typedef enum { ROOM_NONE, ROOM_HOSTING, ROOM_JOINING, ROOM_JOINED } RoomState;
-typedef enum { ACTION_NONE, ACTION_HOST, ACTION_JOIN_ROOM, ACTION_JOIN_ADDRESS, ACTION_LEAVE, ACTION_NAME_CHANGED } MenuAction;
+typedef enum { ACTION_NONE, ACTION_HOST, ACTION_JOIN_ROOM, ACTION_JOIN_ADDRESS, ACTION_LEAVE, ACTION_NAME_CHANGED, ACTION_GITHUB } MenuAction;
 typedef enum { FOCUS_NONE, FOCUS_NAME, FOCUS_ADDRESS } MenuFocus;
 
 typedef struct {
@@ -26,6 +26,9 @@ typedef struct {
     char players[MENU_PLAYERS_LEN];
     int player_count;
     int join_index; /* set with ACTION_JOIN_ROOM */
+    int mode;
+    bool last_standing;
+    int side;
 } Menu;
 
 void menu_init(Menu *m, const char *name);
@@ -36,5 +39,9 @@ bool menu_click(Menu *m, const Lobby *lobby, int x, int y, MenuAction *action);
 void menu_char(Menu *m, int c, MenuAction *action);
 void menu_escape(Menu *m, MenuAction *action);
 void menu_set_status(Menu *m, const char *text);
+/* Mode names and side names, also used by the in-game display. */
+const char *menu_mode_name(int mode);
+const char *menu_side_name(int mode, int side);
+int menu_side_count(int mode);
 
 #endif

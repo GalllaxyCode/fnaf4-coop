@@ -7,7 +7,7 @@
 #endif
 
 #define OVERLAY_MAX_BUBBLES 8
-#define OVERLAY_MAX_QUADS 2
+#define OVERLAY_MAX_QUADS 3
 #define OVERLAY_TEXT_LEN 60
 
 /* Coordinates are in the game's 1024x768 view. */
@@ -21,10 +21,11 @@ typedef struct {
     unsigned color; /* 0xRRGGBB */
     int alpha;
     int knob_u; /* knob position across the door, in percent */
+    bool louver; /* slatted closet door instead of a panelled one */
 } OverlayQuad;
 
-#define OVERLAY_MAX_RECTS 24
-#define OVERLAY_MAX_TEXTS 24
+#define OVERLAY_MAX_RECTS 40
+#define OVERLAY_MAX_TEXTS 40
 typedef enum { ALIGN_LEFT, ALIGN_CENTER } OverlayAlign;
 
 typedef struct {

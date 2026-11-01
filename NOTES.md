@@ -126,6 +126,25 @@ Last updated 2026-10-31.
   subclassing the main window misses real clicks. A WH_GETMESSAGE hook sees them all. Keys swallowed
   there need TranslateMessage first, or WM_CHAR is never made. Test scripts now use mouse_event and
   keybd_event, because posted messages skip this routing.
+- Real paths driven by injected mouse events: a host's light at a door lights a client at the same
+  door within about 220 ms, and a host's hold closes a client's door or closet with the game's
+  animation. Rule 400 mirrored on a client cancelled the kill and left it pushed off the bed, so
+  clients now run Foxy's kill themselves.
+- The game reads the mouse from GetCursorPos, so injected mouse_event moves don't reach its zones.
+  Test scripts give each copy its own cursor through the GetCursorPos hook (`cur`).
+- Zones: `reset` y 464-656 arms the turn, `run back` y 682-762 fires it, both nearly full width.
+- Walk-away and bed-turn rules need Shift and Ctrl up. A friend's shared key held back a client's
+  pending turn, which fired on release and looked like following the host. Reproduced at a door and
+  on the bed. Shared keys now disarm the turn, and a host's turn leaves a client in place.
+- The night's map layer scrolls with each copy's own view: zones and threats shift by follow X - 512.
+  Mirroring absolute X put threats in the wrong place when players faced different ways, in every
+  build before modes. X now travels as a distance from `living room center`. Checked with players
+  facing opposite ways, `bonnie danger` agrees on both copies.
+- Modes, in the real game, test scripts, two copies on one Mac: difficulty scaling raised AI 2,1,1 to
+  5,4,2; rescue completed in 1.5 s; battery ran out and recharged; grip released a door after 8.5 s;
+  EARS got no light; EARS' Ctrl lit Plushtrap for EYES; a client played Bonnie to the door and a shut
+  door sent her back; with Last one standing a dead client rejoined as a ghost in 6 s, a dead host
+  reloaded and restored the night from a snapshot, and the last death ended it for everyone.
 - GetAdaptersInfo works under this Wine, given a large enough buffer.
 
 ## Derived
@@ -145,6 +164,10 @@ Last updated 2026-10-31.
 
 ## Unknown
 
+- Whether the GitHub button reaches a macOS browser. ShellExecute returned success inside Wine.
+- The BB minigame in True cooperative, rescue while the host is the victim, missed rescues in the
+  real game, Foxy and Chica as players, balance of every number in the modes.
+- Whether a background copy ignores the mouse on a real Mac.
 - Whether the overlay looks right on screen. Its pixels were checked in in-process captures only.
 - Two machines, or more than two real copies. macOS Local Network permission may block discovery
   between machines, and one Mac can't show that.
