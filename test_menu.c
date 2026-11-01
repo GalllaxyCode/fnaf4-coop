@@ -132,6 +132,19 @@ static void test_room_settings(void) {
     CHECK(s.text_count < OVERLAY_MAX_TEXTS && s.rect_count < OVERLAY_MAX_RECTS, "draw overflow %d %d", s.text_count, s.rect_count);
 }
 
+static void test_empty_name_keeps_the_old_one(void) {
+    Menu m;
+    Lobby l;
+    MenuAction act;
+    lobby_clear(&l);
+    menu_init(&m, "Zed");
+    m.open = true;
+    menu_click(&m, &l, 500, 195, &act);
+    for (int i = 0; i < 3; i++) menu_char(&m, 8, &act);
+    menu_click(&m, &l, 300, 500, &act);
+    CHECK(strcmp(m.name, "Zed") == 0, "empty box gave '%s'", m.name);
+}
+
 static void test_github_button(void) {
     Menu m;
     Lobby l;
@@ -175,6 +188,7 @@ int main(void) {
     test_join_paths();
     test_room_settings();
     test_github_button();
+    test_empty_name_keeps_the_old_one();
     test_room_screen();
     printf("%d menu checks, %d failures\n", checks, failures);
     return failures != 0;

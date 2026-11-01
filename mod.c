@@ -251,7 +251,6 @@ static void run_action(MenuAction action) {
         break;
     case ACTION_JOIN_ADDRESS: room_join_address(menu.address); break;
     case ACTION_LEAVE: room_leave(""); break;
-    case ACTION_NAME_CHANGED: WritePrivateProfileStringA("coop", "name", menu.name, cfg_ini); break;
     case ACTION_GITHUB: logline("opening the repo: %d", (int)(INT_PTR)ShellExecuteA(NULL, "open", REPO_URL, NULL, NULL, SW_SHOWNORMAL)); break;
     default: break;
     }
@@ -550,6 +549,15 @@ static bool game_input_blocked(void) {
     return menu.open || menu.room == ROOM_JOINING || menu.room == ROOM_JOINED;
 }
 
+/* Saved as it changes, so no way of leaving the name box can lose it. A half-typed empty name is skipped. */
+static void save_name(void) {
+    static char saved[SYNC_NAME_LEN];
+    if (!menu.name[0] || menu.focus == FOCUS_NAME ? !menu.name[0] : strcmp(menu.name, saved) == 0) return;
+    if (strcmp(menu.name, saved) == 0) return;
+    strcpy(saved, menu.name);
+    WritePrivateProfileStringA("coop", "name", menu.name, cfg_ini);
+}
+
 static void log_room_changes(const Output *o) {
     static int mode = -1, state = -1, rescue = -1;
     static bool standing;
@@ -664,6 +672,7 @@ static void coop_tick(uint32_t now) {
         find_rooms(now);
     }
 
+    save_name();
     update_background();
     if (l.frame == FRAME_TITLE && !in_background) poll_mouse();
     memset(&scene, 0, sizeof scene);

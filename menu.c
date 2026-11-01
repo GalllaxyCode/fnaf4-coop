@@ -58,6 +58,7 @@ void menu_init(Menu *m, const char *name) {
     memset(m, 0, sizeof *m);
     strncpy(m->name, name, SYNC_NAME_LEN - 1);
     lobby_clean_name(m->name, SYNC_NAME_LEN);
+    strcpy(m->last_name, m->name);
 }
 
 void menu_set_status(Menu *m, const char *text) {
@@ -201,7 +202,11 @@ void menu_mouse(Menu *m, int x, int y) {
 
 static void leave_field(Menu *m, MenuAction *action) {
     if (m->focus == FOCUS_NAME) {
+        bool blank = true;
+        for (const char *c = m->name; *c; c++) blank = blank && *c == ' ';
+        if (blank) strcpy(m->name, m->last_name);
         lobby_clean_name(m->name, SYNC_NAME_LEN);
+        strcpy(m->last_name, m->name);
         if (action) *action = ACTION_NAME_CHANGED;
     }
     m->focus = FOCUS_NONE;

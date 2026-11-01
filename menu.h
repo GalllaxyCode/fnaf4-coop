@@ -18,6 +18,7 @@ typedef struct {
     MenuFocus focus;
     int hover_x, hover_y;
     char name[SYNC_NAME_LEN];
+    char last_name[SYNC_NAME_LEN]; /* put back if the box is left empty */
     char address[LOBBY_ADDRESS_LEN];
     char status[MENU_STATUS_LEN];
     RoomState room;
