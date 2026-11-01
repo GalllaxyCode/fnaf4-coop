@@ -40,6 +40,21 @@ const Room *lobby_room(const Lobby *l, int index) {
     return NULL;
 }
 
+uint32_t lobby_sweep_address(uint32_t address, uint32_t mask, int step) {
+    if (mask == 0 || mask == 0xFFFFFFFFu) mask = 0xFFFFFF00u; /* no usable mask: assume the common size */
+    if (step < 0 || step >= LOBBY_SWEEP_MAX) return 0;
+    if (step == 0) return address;
+    uint32_t network = address & mask;
+    int64_t below = (int64_t)address - network - 1, above = (int64_t)(network | ~mask) - address - 1;
+    int64_t both = below < above ? below : above;
+    if (both < 0) both = 0;
+    /* Up one, down one, until a side runs out, then the rest of the other side. */
+    if (step <= 2 * both) return step % 2 ? address + (uint32_t)((step + 1) / 2) : address - (uint32_t)(step / 2);
+    int64_t rest = step - 2 * both;
+    if (below > above) return rest <= below - both ? (uint32_t)(address - both - rest) : 0;
+    return rest <= above - both ? (uint32_t)(address + both + rest) : 0;
+}
+
 void lobby_clean_name(char *name, int capacity) {
     int out = 0;
     for (int i = 0; i < capacity && name[i]; i++) {

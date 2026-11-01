@@ -152,8 +152,8 @@ Last updated 2026-11-01.
   got the 250 ms follow grace, cutting the scare at about 0.57 s of 0.97 s. With an animatronic host
   and no Last one standing the night never ended on the host, and the client was pulled back and
   killed about every 15 s. Animatronic copies never saw a scare at all.
-- Scares, fixed: a shared scare runs on everyone, animatronics and ghosts too, with the map and overlay
-  off, and each copy leaves through the game's own rule. Last one standing's last death is a shared
+- Scares, fixed: a shared scare runs on every survivor, ghosts too, with the overlay
+  off, and each copy leaves through the game's own rule. Animatronic players were later taken out of this. Last one standing's last death is a shared
   scare, and the host's goto waits for it, at most 5 s. Runs: Versus with and without Last one
   standing with either side as host, kinds 1, 4, 5, 6, 7, 8, Default, and a full Last one standing
   night. Every copy took 0.95-1.0 s. All scares were started by test scripts.
@@ -167,6 +167,22 @@ Last updated 2026-11-01.
   door sent her back; with Last one standing a dead client rejoined as a ghost in 6 s, a dead host
   reloaded and restored the night from a snapshot, and the last death ended it for everyone.
 - GetAdaptersInfo works under this Wine, given a large enough buffer.
+- Rooms: on a real /20 Wi-Fi (10.91.0.0/20, 255.255.240.0) a client's panel stayed open 16 s with a
+  friend hosting and no announcement arrived, while a join by address worked, so that network carries
+  unicast and not broadcast between devices. Derived, the network itself wasn't inspected. The panel now
+  sends a Probe to `port` on each address outward from its own, 16 a tick, until a room answers, then
+  only known rooms and the `last_room` from the ini. Probes leave from their own port: a shared 47115
+  sent the answer to the other copy's finder on one Mac. With broadcasts off on one Mac, the room
+  appeared 86 ms after the panel opened, and with probing compiled out too it never did.
+- The rule list keyed on the address of the frame's first group, and a new frame can land at the old
+  frame's address. A host stayed at 7 rules (frame 2's) for a whole night, in 3 of 3 runs of one build, so
+  every rule patch did nothing. The list is now rebuilt for 40 ticks after any frame change. The state
+  log prints `rules=`.
+- Nightmare: rule 431 leaves in the frame the scare starts, so holding it back showed Fredbear's scare
+  first. It is left alone now. A client in frame 15 reports the kill with the epoch it kept, and the host
+  counts a kill made there. A host that isn't the last death watches 4.5 s, then reloads the night.
+- Animatronic players get no scare and stay on the map. A host playing one ends the night 1.5 s after a
+  kill, and a client playing one follows the host, but not into frame 15.
 - Fredbear and Nightmare are one object, `Fredbear`. `shadow` above 0 makes it Nightmare: its art, shorter
   timers (hall 10 s against 15, closet or bed 11 s against 20) and its own scare frame. Only Extras
   sets `shadow`. Game over, the title and the win frame clear it. Fredbear AI above 0 stops Freddy (rule 432).
@@ -199,6 +215,8 @@ Last updated 2026-11-01.
 
 ## Unknown
 
+- Probing between two machines. Runs so far reached a host on the same Mac, whose address is the first
+  one tried. The sweep's coverage of a /20 was checked in unit tests only.
 - Whether the GitHub button reaches a macOS browser. ShellExecute returned success inside Wine.
 - The BB minigame in True cooperative, rescue while the host is the victim, missed rescues in the
   real game, Foxy and Chica as players, balance of every number in the modes.

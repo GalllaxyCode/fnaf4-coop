@@ -189,6 +189,8 @@ static void step_host(Sync *s, uint32_t now_ms, const Local *l, Output *out, Pac
     uint32_t dt = s->last_step_ms ? now_ms - s->last_step_ms : 0;
     s->last_step_ms = now_ms;
     if (dt > 1000) dt = 1000;
+    /* A scare can leave the night's frame while the night goes on for everyone else. */
+    bool in_night = l->in_level || l->scaring;
     if (l->in_level && !s->was_in_level) {
         s->epoch++;
         s->kill = KILL_NONE;
@@ -204,14 +206,14 @@ static void step_host(Sync *s, uint32_t now_ms, const Local *l, Output *out, Pac
             s->peers[i].state = PLAYER_ALIVE;
         }
     }
-    s->was_in_level = l->in_level;
+    s->was_in_level = in_night;
 
     fill(s, send, l);
     send->mode = (uint8_t)l->mode;
     send->last_standing = l->last_standing;
     if (l->kill == KILL_NONE && l->station != STATION_NONE) s->my_safe_station = l->station;
     bool in_grace = s->rescued_ms && now_ms - s->rescued_ms < SYNC_RESCUE_GRACE_MS;
-    if (l->in_level && l->kill != KILL_NONE && s->kill == KILL_NONE && s->my_state == PLAYER_ALIVE && on_survivors_side(l->mode, l->side) && !(in_grace && s->rescued_slot == -1))
+    if (in_night && l->kill != KILL_NONE && s->kill == KILL_NONE && s->my_state == PLAYER_ALIVE && on_survivors_side(l->mode, l->side) && !(in_grace && s->rescued_slot == -1))
         player_died(s, l, -1, l->kill, s->my_safe_station, now_ms);
     for (int i = 0; i < SYNC_MAX_PEERS; i++) {
         Peer *c = &s->peers[i];
@@ -219,7 +221,7 @@ static void step_host(Sync *s, uint32_t now_ms, const Local *l, Output *out, Pac
         /* A late report from a death that is already handled must not count as a new one. */
         bool counts = c->state == PLAYER_ALIVE && !(in_grace && s->rescued_slot == i) && on_survivors_side(l->mode, c->side);
         if (c->kill != KILL_NONE && !counts) c->kill = KILL_NONE;
-        if (l->in_level && c->kill != KILL_NONE && c->kill_epoch == s->epoch && s->kill == KILL_NONE) {
+        if (in_night && c->kill != KILL_NONE && c->kill_epoch == s->epoch && s->kill == KILL_NONE) {
             int kind = c->kill;
             c->kill = KILL_NONE;
             player_died(s, l, i, kind, c->safe_station, now_ms);
@@ -229,6 +231,7 @@ static void step_host(Sync *s, uint32_t now_ms, const Local *l, Output *out, Pac
     if (l->in_level && l->last_standing && !s->rescue && s->kill == KILL_NONE && count_survivors(s, l, now_ms, -2) == 0 && l->value_count > 0) lose_team(s, now_ms);
     if (l->in_level && s->rescue) step_rescue(s, l, now_ms, dt);
     if (l->in_level && l->mode == MODE_EXTENDED) step_battery(s, l, now_ms, dt);
+    if (s->kill == KILL_NONE) s->calm_ms = now_ms;
 
     for (int i = 0; i < SYNC_MAX_PEERS; i++) {
         Peer *c = &s->peers[i];
@@ -254,13 +257,15 @@ static void step_host(Sync *s, uint32_t now_ms, const Local *l, Output *out, Pac
             copy_name(send->players[n].name, c->name);
         }
     }
-    if (l->in_level && s->kill != KILL_NONE && l->kill == KILL_NONE) out->apply_kill = s->kill;
+    bool survivor = on_survivors_side(l->mode, l->side);
+    if (l->in_level && s->kill != KILL_NONE && l->kill == KILL_NONE && survivor) out->apply_kill = s->kill;
     out->mode = l->mode;
     out->last_standing = l->last_standing;
     out->my_state = s->my_state;
     out->battery = s->battery;
     out->team_lost = s->team_lost;
-    out->end_night = s->team_lost && (s->kill == KILL_NONE || now_ms - s->team_lost_ms >= SYNC_FOLLOW_KILL_GRACE_MS);
+    out->end_night = (s->team_lost && (s->kill == KILL_NONE || now_ms - s->team_lost_ms >= SYNC_FOLLOW_KILL_GRACE_MS)) ||
+                     (s->kill != KILL_NONE && !survivor && now_ms - s->calm_ms >= SYNC_ANIMATRONIC_END_MS);
     out->survivors = count_survivors(s, l, now_ms, -2);
     out->rescue = s->rescue;
     out->rescue_station = s->rescue_station;
@@ -286,7 +291,7 @@ static void step_client(Sync *s, uint32_t now_ms, const Local *l, Output *out, P
     out->my_state = s->my_state; /* holds through a load, while no packets arrive */
     out->host_lost = s->host_closed || (s->have_host && now_ms - s->host_ms >= SYNC_HOST_LOST_MS);
 
-    if (!l->in_level) {
+    if (!l->in_level && !l->scaring) {
         s->my_epoch = 0;
         s->kill_applied = false;
     }
@@ -300,7 +305,8 @@ static void step_client(Sync *s, uint32_t now_ms, const Local *l, Output *out, P
                 s->mismatch = true;
                 s->mismatch_ms = now_ms;
             }
-            uint32_t grace = h->kill != KILL_NONE || l->kill != KILL_NONE || l->scaring ? SYNC_FOLLOW_KILL_GRACE_MS : SYNC_FOLLOW_GRACE_MS;
+            bool will_scare = h->kill != KILL_NONE && on_survivors_side(h->mode, l->side);
+            uint32_t grace = will_scare || l->kill != KILL_NONE || l->scaring ? SYNC_FOLLOW_KILL_GRACE_MS : SYNC_FOLLOW_GRACE_MS;
             if (now_ms - s->mismatch_ms >= grace && (!s->sent_goto || now_ms - s->last_goto_ms >= SYNC_FOLLOW_RETRY_MS)) {
                 out->go_to_frame = true;
                 out->frame = h->frame;
@@ -336,7 +342,7 @@ static void step_client(Sync *s, uint32_t now_ms, const Local *l, Output *out, P
             add_player(out, h->players[i].station, h->players[i].input, h->players[i].side, h->players[i].state, h->players[i].name);
             out->others |= h->players[i].input;
         }
-        if (l->in_level && s->my_epoch != 0 && h->epoch == s->my_epoch && h->kill != KILL_NONE && l->kill == KILL_NONE) out->apply_kill = h->kill;
+        if (l->in_level && s->my_epoch != 0 && h->epoch == s->my_epoch && h->kill != KILL_NONE && l->kill == KILL_NONE && on_survivors_side(h->mode, l->side)) out->apply_kill = h->kill;
     }
 
     for (int i = 0; i < EV_COUNT; i++)

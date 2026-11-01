@@ -9,6 +9,7 @@
 #define LEVEL 3
 #define TITLE 1
 #define OVER 4
+#define NIGHTMARE_FRAME 15
 typedef struct { int to, from; uint32_t at; Packet p; bool used; } Msg;
 typedef struct {
     Sync s; Local l; Output o;
@@ -311,7 +312,7 @@ static void test_animatronics_never_die_or_count(void) {
     run(200);
     CHECK(a[0].o.team_lost, "all survivors out did not end the night");
 }
-static void test_last_death_scares_everyone_before_the_night_ends(void) {
+static void test_last_death_spares_animatronics_and_ends_the_night(void) {
     reset(LEVEL);
     settings(MODE_VERSUS, true);
     run(100);
@@ -321,11 +322,74 @@ static void test_last_death_scares_everyone_before_the_night_ends(void) {
     run(20);
     CHECK(a[0].o.team_lost, "the last death did not lose the night");
     CHECK(!a[0].o.end_night, "the night ended over the scare");
-    CHECK(a[0].kills_applied > 0, "the host's animatronic got no scare");
-    CHECK(a[2].kills_applied > 0, "a client's animatronic got no scare");
+    CHECK(a[0].kills_applied == 0, "the host's animatronic got a scare");
+    CHECK(a[2].kills_applied == 0, "a client's animatronic got a scare");
     CHECK(a[1].frame == LEVEL, "the victim was moved during its scare");
     run(400);
     CHECK(a[0].o.end_night, "a scare that never finished held the night open");
+}
+static void test_an_animatronic_host_ends_the_night_without_a_scare(void) {
+    reset(LEVEL);
+    settings(MODE_VERSUS, false);
+    run(100);
+    a[0].l.side = SIDE_BONNIE;
+    run(100);
+    a[1].l.kill = KILL_BONNIE;
+    run(10);
+    CHECK(!a[0].o.end_night, "ended before the scare could play");
+    run(200);
+    CHECK(a[0].o.end_night, "the night never ended on an animatronic host");
+    CHECK(a[0].kills_applied == 0, "the animatronic host got a scare");
+    CHECK(a[2].kills_applied > 0, "another survivor got no scare");
+}
+static void test_an_animatronic_client_leaves_quickly_and_unscared(void) {
+    reset(LEVEL);
+    settings(MODE_VERSUS, false);
+    run(100);
+    a[2].l.side = SIDE_FOXY;
+    run(100);
+    a[0].l.kill = KILL_CHICA;
+    run(40);
+    CHECK(a[1].kills_applied > 0, "a survivor got no scare");
+    CHECK(a[2].kills_applied == 0, "the animatronic client got a scare");
+    a[0].frame = OVER;
+    run(40);
+    CHECK(a[2].frame == OVER, "the animatronic waited out a scare it doesn't play");
+    CHECK(a[1].frame == LEVEL, "a survivor was moved during its scare");
+}
+static void test_a_death_that_left_the_frame_is_still_reported(void) {
+    reset(LEVEL);
+    settings(MODE_VERSUS, false);
+    run(200);
+    a[1].frame = NIGHTMARE_FRAME; /* the game left the night in the frame the scare began */
+    a[1].l.kill = KILL_FREDBEAR;
+    a[1].l.scaring = true;
+    run(40);
+    CHECK(a[0].kills_applied > 0, "the host never heard about the death");
+    CHECK(a[2].kills_applied > 0, "the other survivors never heard about the death");
+    CHECK(a[1].frame == NIGHTMARE_FRAME, "the victim was moved during its scare");
+    a[0].frame = a[2].frame = a[3].frame = NIGHTMARE_FRAME;
+    a[0].l.scaring = a[2].l.scaring = a[3].l.scaring = true;
+    run(10);
+    a[0].l.scaring = a[2].l.scaring = a[3].l.scaring = false;
+    a[0].frame = OVER;
+    a[1].l.scaring = false;
+    a[1].l.kill = KILL_NONE;
+    run(120);
+    CHECK(a[1].frame == OVER, "the victim never followed");
+}
+static void test_a_host_killed_outside_the_night_frame_is_reported(void) {
+    reset(LEVEL);
+    settings(MODE_VERSUS, false);
+    run(200);
+    uint32_t epoch = a[0].s.epoch;
+    a[0].frame = NIGHTMARE_FRAME;
+    a[0].l.kill = KILL_FREDBEAR;
+    a[0].l.scaring = true;
+    run(40);
+    CHECK(a[0].s.kill == KILL_FREDBEAR, "the host's own death was lost");
+    CHECK(a[1].frame == LEVEL || a[1].frame == NIGHTMARE_FRAME, "client went to frame %d", a[1].frame);
+    CHECK(a[0].s.epoch == epoch, "the scare started a new night");
 }
 static void test_fredbear_and_nightmare_are_animatronics(void) {
     reset(LEVEL);
@@ -420,7 +484,11 @@ int main(void) {
             test_lost_host_stops_writes();
             test_settings_reach_clients();
             test_last_standing_keeps_the_night_going();
-            test_last_death_scares_everyone_before_the_night_ends();
+            test_last_death_spares_animatronics_and_ends_the_night();
+            test_an_animatronic_host_ends_the_night_without_a_scare();
+            test_an_animatronic_client_leaves_quickly_and_unscared();
+            test_a_death_that_left_the_frame_is_still_reported();
+            test_a_host_killed_outside_the_night_frame_is_reported();
             test_a_leaver_ending_the_night_needs_no_scare();
             test_fredbear_and_nightmare_are_animatronics();
             test_a_ghost_keeps_its_scare_when_the_host_moves_on();

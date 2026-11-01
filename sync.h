@@ -7,7 +7,7 @@
 #include <stdint.h>
 
 #define SYNC_MAGIC 0x4F433446u /* "F4CO" */
-#define SYNC_VERSION 4
+#define SYNC_VERSION 5
 #define SYNC_MAX_PEERS 7
 #define SYNC_MAX_PLAYERS (SYNC_MAX_PEERS + 1)
 #define SYNC_NAME_LEN 16
@@ -17,6 +17,7 @@
 #define SYNC_FOLLOW_GRACE_MS 250
 #define SYNC_FOLLOW_KILL_GRACE_MS 5000 /* lets a jumpscare finish before a client is moved */
 #define SYNC_FOLLOW_RETRY_MS 1500
+#define SYNC_ANIMATRONIC_END_MS 1500 /* a host playing an animatronic leaves the night after the scare it doesn't see */
 
 /* Rescue: a friend has this long to reach the spot and keep a light on it. */
 #define SYNC_RESCUE_MS 12000
@@ -65,7 +66,7 @@ typedef struct {
     int station;
     uint16_t input;
     int kill; /* set once this player has died in the current attempt */
-    bool scaring; /* a jumpscare is playing here, whoever it belongs to */
+    bool scaring; /* a jumpscare is playing here, whoever it belongs to, even if it left the night's frame */
     int side;
     int mode; /* host only */
     bool last_standing; /* host only */
@@ -200,6 +201,7 @@ typedef struct {
     int rescued_slot;
     bool team_lost;
     uint32_t team_lost_ms;
+    uint32_t calm_ms; /* last time there was no shared kill */
 
     /* client */
     bool have_host;

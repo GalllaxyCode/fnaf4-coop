@@ -188,6 +188,7 @@ void menu_draw(const Menu *m, const Lobby *lobby, uint32_t now_ms, OverlayScene 
     rect(s, &edge, COLOR_EDGE, 255, 14);
     rect(s, &panel, COLOR_PANEL, 245, 12);
     text(s, PANEL_X0 + 28, PANEL_Y0 + 12, 2, ALIGN_LEFT, COLOR_TEXT, "CO-OP");
+    text(s, PANEL_X0 + 148, PANEL_Y0 + 24, 1, ALIGN_LEFT, COLOR_DIM, "V" MOD_VERSION);
     button(s, m, &close_button, "X");
     button(s, m, &github_button, "GITHUB");
     if (m->room == ROOM_NONE) draw_lobby(m, lobby, now_ms, s);

@@ -23,8 +23,6 @@
 #define FRAME_NIGHTMARE 15
 #define WALK_AWAY_TOP 682 /* the `run back` zone, in view coordinates */
 #define WALK_AWAY_BOTTOM 762
-#define RULE_NIGHTMARE_EXIT 431 /* a scare with `shadow` on leaves the night at once */
-#define SCARE_REPORT_MS 250 /* long enough for the death to reach the host first */
 #define NIGHTMARE_SCARE_MS 4500 /* the frame's own timer sends it to Extras at 5 s */
 #define COUNT(a) (sizeof(a) / sizeof((a)[0]))
 
@@ -144,6 +142,8 @@ void rules_setup(int new_mode, int new_side) {
 static bool playing_animatronic(void) { return mode == MODE_VERSUS && side != SIDE_SURVIVOR; }
 static bool is_ghost(void) { return my_state != PLAYER_ALIVE || playing_animatronic(); }
 bool rules_map_open(void) { return playing_animatronic() && game_frame() == FRAME_LEVEL && !scare_on; }
+/* Frame 15 is Nightmare's scare, so an animatronic player stays on the map until it's over. */
+bool rules_may_follow(int frame) { return !(playing_animatronic() && frame == FRAME_NIGHTMARE); }
 void rules_command(int zone) {
     command_seq++;
     command_zone = (uint8_t)zone;
@@ -352,7 +352,9 @@ void rules_read(Local *l) {
         last_av0 = -1;
         force_active = false;
         scare_on = false;
+        /* The game leaves for this frame in the frame the scare starts, before a tick can see it. */
         l->scaring = frame == FRAME_NIGHTMARE;
+        if (l->scaring) l->kill = KILL_FREDBEAR;
         return;
     }
     l->in_level = true;
@@ -420,7 +422,7 @@ bool rules_host_resume(Local *l, uint32_t now) {
         away = true;
         away_since = now;
     }
-    if (now - away_since > 500 && now - last_goto_ms > 3000) {
+    if (now - away_since > (l->frame == FRAME_NIGHTMARE ? NIGHTMARE_SCARE_MS : 500) && now - last_goto_ms > 3000) {
         last_goto_ms = now;
         game_goto(FRAME_LEVEL);
     }
@@ -975,19 +977,11 @@ static void update_blocks(const Output *o, const Local *l, uint32_t dt) {
     else key_block(VK_SHIFT_KEY, false);
 }
 
-/* The game's exit from a Nightmare scare beats the mod's next tick, so a death would never be
- * reported, and its own frame ends in Extras. Here the exit waits for the report, and the scare
- * ends at game over like any other. */
-static void versus_scare(const Local *l, uint32_t now) {
-    static uint32_t calm_ms, nightmare_ms;
-    int frame = game_frame();
+/* Nightmare's scare frame ends in Extras, so in Versus it ends at game over like any other scare. */
+static void versus_scare(uint32_t now) {
+    static uint32_t nightmare_ms;
     if (mode != MODE_VERSUS) return;
-    if (frame == FRAME_LEVEL) {
-        if (!l->scaring) calm_ms = now;
-        if (now - calm_ms >= SCARE_REPORT_MS) evg_enable(RULE_NIGHTMARE_EXIT);
-        else evg_disable(RULE_NIGHTMARE_EXIT);
-    }
-    if (frame != FRAME_NIGHTMARE) nightmare_ms = now;
+    if (game_frame() != FRAME_NIGHTMARE) nightmare_ms = now;
     else if (now - nightmare_ms >= NIGHTMARE_SCARE_MS) game_goto(FRAME_GAME_OVER);
 }
 
@@ -998,12 +992,12 @@ void rules_apply(const Output *o, const Local *l, uint32_t now) {
     last = now;
     if (dt > 200) dt = 200;
     my_state = o->my_state;
-    if (host && l->in_level && my_state != PLAYER_ALIVE) resume_needed = !o->team_lost;
+    if (host && (l->in_level || l->scaring) && my_state != PLAYER_ALIVE) resume_needed = !o->team_lost;
     if (host && my_state == PLAYER_ALIVE && !away) resume_needed = false;
     if (away) return;
     if (l->in_level && o->apply_kill != KILL_NONE) scare_on = true;
     role_rules(o);
-    versus_scare(l, now);
+    versus_scare(now);
     update_blocks(o, l, dt);
     if (is_ghost()) {
         key_force(VK_SHIFT_KEY, false);

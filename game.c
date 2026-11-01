@@ -37,11 +37,13 @@
 #define LOOPEXIT_NEXTLEVEL 1
 #define LOOPEXIT_GOTOLEVEL 3
 #define MAX_GROUPS 1024
+#define REINDEX_TICKS 40
 
 static BYTE *base, *rh;
 static int frame_index = -1;
 static BYTE *groups[MAX_GROUPS];
 static int group_count;
+static int indexed_frame = -1, settle_ticks;
 static BYTE *groups_for;
 
 static BYTE *read_ptr(BYTE *at) {
@@ -54,7 +56,14 @@ void game_init(BYTE *exe_base) { base = exe_base; }
 static void index_groups(void) {
     BYTE *frame = read_ptr(rh + RH_FRAME);
     BYTE *first = frame ? read_ptr(frame + FRAME_EVENTS) : NULL;
-    if (first == groups_for) return;
+    /* A new frame's rules can land at the old frame's address, so an unchanged pointer proves
+     * nothing, and they may not be loaded on the first tick of the frame. */
+    if (frame_index != indexed_frame) {
+        indexed_frame = frame_index;
+        settle_ticks = REINDEX_TICKS;
+    }
+    if (first == groups_for && settle_ticks == 0) return;
+    if (settle_ticks > 0) settle_ticks--;
     groups_for = first;
     group_count = 0;
     if (!first) return;

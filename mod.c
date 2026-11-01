@@ -28,6 +28,7 @@
 #define FRAME_TEAM_LOST 4
 #define JOIN_TIMEOUT_MS 6000
 #define MAX_ADAPTERS 8
+#define PROBES_PER_TICK 16 /* about 320 a second, so a /20 takes 13 s and a /24 under one */
 
 #define NAME_COUNT (sizeof names / sizeof names[0])
 static const char *const names[] = {
@@ -43,14 +44,15 @@ static bool enabled;
 static bool started;
 static BYTE *exe_base;
 
-static SOCKET sock = INVALID_SOCKET, finder = INVALID_SOCKET;
+static SOCKET sock = INVALID_SOCKET, finder = INVALID_SOCKET, prober = INVALID_SOCKET;
 static struct sockaddr_in host_addr;
 static struct sockaddr_in peers[SYNC_MAX_PEERS];
 static Sync sync_state;
 static Menu menu;
 static Lobby lobby;
 static bool in_room, click_taken;
-static uint32_t join_started_ms, last_announce_ms;
+static uint32_t join_started_ms, last_announce_ms, cfg_last_room;
+static int cfg_test_no_broadcast;
 static struct { uint32_t address, mask; } adapters[MAX_ADAPTERS];
 static int adapter_count;
 static HHOOK message_hook_handle;
@@ -256,18 +258,22 @@ static void run_action(MenuAction action) {
     }
 }
 
+static void fill_announce(Announce *a, int players) {
+    memset(a, 0, sizeof *a);
+    a->magic = LOBBY_MAGIC;
+    a->version = SYNC_VERSION;
+    a->players = (uint8_t)players;
+    a->port = (uint16_t)cfg_port;
+    a->session = sync_state.session;
+    strncpy(a->name, menu.name, SYNC_NAME_LEN - 1);
+}
+
 static void announce_room(uint32_t now, int players) {
     Announce a;
     struct sockaddr_in to;
-    if (now - last_announce_ms < LOBBY_ANNOUNCE_MS) return;
+    if (cfg_test_no_broadcast || now - last_announce_ms < LOBBY_ANNOUNCE_MS) return;
     last_announce_ms = now;
-    memset(&a, 0, sizeof a);
-    a.magic = LOBBY_MAGIC;
-    a.version = SYNC_VERSION;
-    a.players = (uint8_t)players;
-    a.port = (uint16_t)cfg_port;
-    a.session = sync_state.session;
-    strncpy(a.name, menu.name, SYNC_NAME_LEN - 1);
+    fill_announce(&a, players);
     memset(&to, 0, sizeof to);
     to.sin_family = AF_INET;
     to.sin_port = htons(LOBBY_PORT);
@@ -280,9 +286,35 @@ static void announce_room(uint32_t now, int players) {
     }
 }
 
-static void find_rooms(uint32_t now) {
+static void read_rooms(SOCKET from_socket, uint32_t now) {
     Announce a;
     struct sockaddr_in from;
+    for (;;) {
+        int len = sizeof from;
+        int n = recvfrom(from_socket, (char *)&a, sizeof a, 0, (struct sockaddr *)&from, &len);
+        if (n < 0) {
+            /* A probe to an address with nobody on it can come back as this. */
+            if (WSAGetLastError() == WSAECONNRESET) continue;
+            break;
+        }
+        if (n != (int)sizeof a) continue;
+        /* A host hears its own announcement, which is the one reliable source of its Wi-Fi address. */
+        if (a.session == sync_state.session) {
+            if (in_room && sync_state.is_host) snprintf(menu.my_address, LOBBY_ADDRESS_LEN, "%s", inet_ntoa(from.sin_addr));
+            continue;
+        }
+        if (a.magic == LOBBY_MAGIC && a.version != SYNC_VERSION) {
+            static uint32_t logged;
+            if (logged != a.session) logline("room of %.15s at %s is on another version of the mod", a.name, inet_ntoa(from.sin_addr));
+            logged = a.session;
+            continue;
+        }
+        bool was_empty = lobby_count(&lobby) == 0;
+        if (lobby_note(&lobby, &a, from.sin_addr.s_addr, now) && was_empty) logline("found room %s", a.name);
+    }
+}
+
+static void find_rooms(uint32_t now) {
     if (finder == INVALID_SOCKET) {
         u_long nonblocking = 1;
         BOOL on = TRUE;
@@ -297,20 +329,55 @@ static void find_rooms(uint32_t now) {
         any.sin_port = htons(LOBBY_PORT);
         if (bind(finder, (struct sockaddr *)&any, sizeof any) != 0) logline("cannot listen for rooms: %d", WSAGetLastError());
     }
-    for (;;) {
-        int len = sizeof from;
-        int n = recvfrom(finder, (char *)&a, sizeof a, 0, (struct sockaddr *)&from, &len);
-        if (n < 0) break;
-        if (n != (int)sizeof a) continue;
-        /* A host hears its own announcement, which is the one reliable source of its Wi-Fi address. */
-        if (a.session == sync_state.session) {
-            if (in_room && sync_state.is_host) snprintf(menu.my_address, LOBBY_ADDRESS_LEN, "%s", inet_ntoa(from.sin_addr));
+    read_rooms(finder, now);
+    if (prober != INVALID_SOCKET) read_rooms(prober, now);
+    lobby_expire(&lobby, now);
+}
+
+static void probe_send(uint32_t address) {
+    Probe probe;
+    struct sockaddr_in to;
+    memset(&probe, 0, sizeof probe);
+    probe.magic = LOBBY_PROBE_MAGIC;
+    probe.version = SYNC_VERSION;
+    memset(&to, 0, sizeof to);
+    to.sin_family = AF_INET;
+    to.sin_port = htons((u_short)cfg_port);
+    to.sin_addr.s_addr = address;
+    sendto(prober, (const char *)&probe, sizeof probe, 0, (struct sockaddr *)&to, sizeof to);
+}
+
+/* Many networks drop broadcasts between devices but carry the packets a join needs, so the panel
+ * also asks each address directly: rooms it knows every second, and the rest until one answers. */
+static void probe_rooms(uint32_t now) {
+    static int adapter, step;
+    static uint32_t last_ms;
+    if (prober == INVALID_SOCKET) {
+        /* Its own port, so the answer can't go to another copy listening for broadcasts. */
+        u_long nonblocking = 1;
+        prober = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (prober == INVALID_SOCKET) return;
+        ioctlsocket(prober, FIONBIO, &nonblocking);
+    }
+    if (now - last_ms >= LOBBY_ANNOUNCE_MS) {
+        last_ms = now;
+        if (cfg_last_room) probe_send(cfg_last_room);
+        for (int i = 0; i < lobby_count(&lobby); i++) probe_send(lobby_room(&lobby, i)->address);
+    }
+    if (lobby_count(&lobby) > 0 || adapter_count == 0) return;
+    for (int i = 0; i < PROBES_PER_TICK; i++) {
+        uint32_t next = lobby_sweep_address(ntohl(adapters[adapter].address), ntohl(adapters[adapter].mask), step++);
+        if (next) {
+            probe_send(htonl(next));
             continue;
         }
-        bool was_empty = lobby_count(&lobby) == 0;
-        if (lobby_note(&lobby, &a, from.sin_addr.s_addr, now) && was_empty) logline("found room %s", a.name);
+        step = 0;
+        adapter++;
+        if (adapter < adapter_count) continue;
+        adapter = 0;
+        find_adapters(); /* the player may have moved to another network */
+        if (adapter_count == 0) return;
     }
-    lobby_expire(&lobby, now);
 }
 
 static int peer_slot(const struct sockaddr_in *from, uint32_t now) {
@@ -338,6 +405,12 @@ static void net_poll(uint32_t now) {
         if (n < 0) {
             if (WSAGetLastError() == WSAECONNRESET) continue;
             break;
+        }
+        if (n == (int)sizeof(Probe) && sync_state.is_host && ((const Probe *)&p)->magic == LOBBY_PROBE_MAGIC) {
+            Announce a;
+            fill_announce(&a, menu.player_count);
+            sendto(sock, (const char *)&a, sizeof a, 0, (struct sockaddr *)&from, sizeof from);
+            continue;
         }
         if (n != (int)sizeof p) continue;
         sync_recv(&sync_state, sync_state.is_host ? peer_slot(&from, now) : 0, &p, now);
@@ -416,6 +489,7 @@ static void script_run(uint32_t elapsed, bool on_title) {
             pos_read(obj(L"living room center"), &cx, &cy);
             logline("dump ai=%d,%d,%d,%d bonnie_rel=%d,%d mark=%d danger=%d", cnt_get(L"Bonnie AI", -1), cnt_get(L"Chica AI", -1), cnt_get(L"Foxy AI", -1), cnt_get(L"Freddy AI", -1), bx - cx, by, cx, cnt_get(L"bonnie danger", -1));
         }
+        else if (strcmp(s->command, "shadow") == 0) cnt_set(L"shadow", s->value);
         else if (strcmp(s->command, "map") == 0) rules_map_click(s->value / 10000, s->value % 10000, real_timeGetTime());
         else if (strcmp(s->command, "front") == 0) SetForegroundWindow(overlay_game_window());
         else if (strcmp(s->command, "bg") == 0) test_background = s->value != 0;
@@ -501,8 +575,8 @@ static void log_state(uint32_t now, const Local *l, const Output *o) {
         logline("mini frame=%d light=%d time=%d active=%d trap=%d,%d view=%d others=%03x %s", l->frame, cnt_get(L"light on", -1), cnt_get(L"Counter", -1), cnt_get(L"becoming active", -1), px, py, view, o->others, sync_state.is_host ? "" : rules_debug());
         return;
     }
-    logline("state frame=%d hour=%d night=%d av0=%d doors=%d/%d freddy=%d b=%d,%d c=%d,%d f=%d,%d bear=%d,%d ai=%d shadow=%d players=%d bat=%d %s", l->frame, cnt_get(L"hour", -1), cnt_get(L"Night", -1), av0,
-            cnt_get(L"left door shut", -1), cnt_get(L"right door shut", -1), cnt_get(L"Freddy counter", -1), bx, by, cx, cy, fx, fy, bearx, beary, cnt_get(L"Fredbear AI", -1), cnt_get(L"shadow", -1), o->player_count, o->battery, rules_debug());
+    logline("state frame=%d hour=%d night=%d av0=%d doors=%d/%d freddy=%d b=%d,%d c=%d,%d f=%d,%d bear=%d,%d ai=%d shadow=%d rules=%d players=%d bat=%d %s", l->frame, cnt_get(L"hour", -1), cnt_get(L"Night", -1), av0,
+            cnt_get(L"left door shut", -1), cnt_get(L"right door shut", -1), cnt_get(L"Freddy counter", -1), bx, by, cx, cy, fx, fy, bearx, beary, cnt_get(L"Fredbear AI", -1), cnt_get(L"shadow", -1), evg_count(), o->player_count, o->battery, rules_debug());
 }
 
 /* Every move in the room goes in the log, so a report from a real game can be traced. */
@@ -526,6 +600,9 @@ static void update_room_panel(const Output *o, uint32_t now) {
         if (sync_state.have_host) {
             menu.room = ROOM_JOINED;
             logline("joined the room of %s", sync_state.host.name);
+            /* The first place to look next time, when broadcasts don't reach this network. */
+            cfg_last_room = host_addr.sin_addr.s_addr;
+            WritePrivateProfileStringA("coop", "last_room", inet_ntoa(host_addr.sin_addr), cfg_ini);
         } else if (now - join_started_ms >= JOIN_TIMEOUT_MS) {
             room_leave("Could not reach that room");
             return;
@@ -662,7 +739,7 @@ static void coop_tick(uint32_t now) {
             logline("everyone is out, the night is over");
             game_goto(FRAME_TEAM_LOST);
         }
-        if (o.go_to_frame) {
+        if (o.go_to_frame && rules_may_follow(o.frame)) {
             logline("following the host to frame %d", o.frame);
             game_goto(o.frame);
         }
@@ -676,6 +753,7 @@ static void coop_tick(uint32_t now) {
         log_room_changes(&l, &o);
     } else if (l.frame == FRAME_TITLE && menu.open) {
         find_rooms(now);
+        probe_rooms(now);
     }
 
     save_name();
@@ -821,6 +899,14 @@ __attribute__((used)) DWORD coop_timeGetTime(void) {
         WSAStartup(MAKEWORD(2, 2), &wsa);
         find_adapters();
         logline("this computer: %s", best_address());
+        for (int i = 0; i < adapter_count; i++) {
+            struct in_addr a, m;
+            char at[20];
+            a.s_addr = adapters[i].address;
+            m.s_addr = adapters[i].mask;
+            snprintf(at, sizeof at, "%s", inet_ntoa(a));
+            logline("network %s mask %s", at, inet_ntoa(m));
+        }
         if (strcmp(cfg_role, "host") == 0) room_host();
         else if (strcmp(cfg_role, "client") == 0 && cfg_host[0]) room_join_address(cfg_host);
     }
@@ -838,18 +924,21 @@ __attribute__((used)) DWORD coop_timeGetTime(void) {
 }
 
 static void load_config(void) {
-    char logp[MAX_PATH], name[SYNC_NAME_LEN], bot[512];
+    char logp[MAX_PATH], name[SYNC_NAME_LEN], bot[512], last_room[32];
     path_beside_self(cfg_ini, sizeof cfg_ini, "fnaf4coop.ini");
     path_beside_self(logp, sizeof logp, "fnaf4coop.log");
     GetPrivateProfileStringA("coop", "role", "off", cfg_role, sizeof cfg_role, cfg_ini);
     GetPrivateProfileStringA("coop", "host", "", cfg_host, sizeof cfg_host, cfg_ini);
     GetPrivateProfileStringA("coop", "name", "Player", name, sizeof name, cfg_ini);
+    GetPrivateProfileStringA("coop", "last_room", "", last_room, sizeof last_room, cfg_ini);
+    if (last_room[0] && inet_addr(last_room) != INADDR_NONE) cfg_last_room = inet_addr(last_room);
     cfg_port = (int)GetPrivateProfileIntA("coop", "port", 47114, cfg_ini);
     cfg_test_mode = (int)GetPrivateProfileIntA("test", "test_mode", 0, cfg_ini);
     cfg_test_skip_title = (int)GetPrivateProfileIntA("test", "skip_title_ms", 0, cfg_ini);
+    cfg_test_no_broadcast = (int)GetPrivateProfileIntA("test", "no_broadcast", 0, cfg_ini);
     GetPrivateProfileStringA("test", "script", "", bot, sizeof bot, cfg_ini);
     logf_ = fopen(logp, "w");
-    logline("fnaf4coop 3 role=%s name=%s", cfg_role, name);
+    logline("fnaf4coop %s role=%s name=%s", MOD_VERSION, cfg_role, name);
     if (!exe_is_supported()) { logline("this exe is not the supported Steam build, co-op is off"); return; }
     menu_init(&menu, name);
     lobby_clear(&lobby);

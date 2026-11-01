@@ -187,7 +187,57 @@ static void test_room_screen(void) {
     CHECK(!m.open, "escape did not close");
 }
 
+static void test_sweep_starts_near_and_covers_the_network(void) {
+    uint32_t me = 0x0A5B04BBu, mask = 0xFFFFF000u; /* 10.91.4.187/20 */
+    CHECK(lobby_sweep_address(me, mask, 0) == me, "the first probe is this machine");
+    CHECK(lobby_sweep_address(me, mask, 1) == me + 1, "step 1");
+    CHECK(lobby_sweep_address(me, mask, 2) == me - 1, "step 2");
+    static unsigned char seen[4096];
+    memset(seen, 0, sizeof seen);
+    int found = 0, step;
+    for (step = 0; ; step++) {
+        uint32_t a = lobby_sweep_address(me, mask, step);
+        if (!a) break;
+        CHECK((a & mask) == (me & mask), "left the network at step %d", step);
+        CHECK((a & ~mask) != 0 && (a & ~mask) != ~mask, "network or broadcast address at step %d", step);
+        CHECK(!seen[a & ~mask], "repeat at step %d", step);
+        seen[a & ~mask] = 1;
+        if (a == 0x0A5B024Fu) found = step; /* 10.91.2.79, the friend in the report */
+    }
+    CHECK(step == 4094, "covered %d addresses", step);
+    CHECK(found > 0 && found < 1300, "the friend took %d probes", found);
+
+    uint32_t home = 0xC0A80105u; /* 192.168.1.5/24, near the bottom */
+    memset(seen, 0, sizeof seen);
+    for (step = 0; ; step++) {
+        uint32_t a = lobby_sweep_address(home, 0xFFFFFF00u, step);
+        if (!a) break;
+        CHECK(!seen[a & 0xFF] && (a & 0xFF) != 0 && (a & 0xFF) != 255, "bad address at step %d", step);
+        seen[a & 0xFF] = 1;
+    }
+    CHECK(step == 254, "covered %d of a /24", step);
+    CHECK(lobby_sweep_address(home, 0, 1) == home + 1, "no mask should act like a /24");
+    CHECK(lobby_sweep_address(home, 0, 254) == 0, "no mask should stop at a /24");
+    CHECK(lobby_sweep_address(0x0A000005u, 0xFF000000u, LOBBY_SWEEP_MAX) == 0, "a huge network must be capped");
+}
+
+static void test_the_panel_shows_the_version(void) {
+    Menu m;
+    Lobby l;
+    OverlayScene s;
+    bool shown = false;
+    menu_init(&m, "A");
+    lobby_clear(&l);
+    m.open = true;
+    memset(&s, 0, sizeof s);
+    menu_draw(&m, &l, 0, &s);
+    for (int i = 0; i < s.text_count; i++) shown = shown || strcmp(s.texts[i].text, "V" MOD_VERSION) == 0;
+    CHECK(shown, "no version on the panel");
+}
+
 int main(void) {
+    test_sweep_starts_near_and_covers_the_network();
+    test_the_panel_shows_the_version();
     test_rooms();
     test_names();
     test_panel_flow();

@@ -25,7 +25,7 @@ The host picks a mode in the CO-OP panel. In every mode, everyone stands in the 
 
 Fredbear and Nightmare are one body in the game, so if both are picked, those players share one Nightmare. Nightmare's timers are shorter than Fredbear's.
 
-A held door shuts for everyone, jumpscares are shared with everyone in the room, animatronic players and ghosts included, and each player's name floats over where they are. Standing with a friend at a door they hold or light, you share it, and moving the mouse down to walk away still works.
+A held door shuts for everyone, jumpscares are shared with every survivor, ghosts included, while animatronic players stay on the map, and each player's name floats over where they are. Standing with a friend at a door they hold or light, you share it, and moving the mouse down to walk away still works.
 
 ## Download
 
@@ -62,7 +62,10 @@ On Windows, putting `winmm.dll` next to the exe should be enough, but that is un
 2. One player clicks **Host a room**, closes the panel, and picks New Game or Continue when everyone is in.
 3. Everyone else clicks the room in the list. If it doesn't appear, type the address the host's panel shows into **Join by address**.
 
+Rooms are announced by broadcast, and the panel also asks nearby addresses directly, because many networks drop broadcasts between devices. On a large network a room can take up to about 15 seconds to appear. Keep the panel open while it looks.
+
 If rooms never appear, check that:
+- everyone has the same version, shown beside CO-OP in the panel
 - everyone is on the same Wi-Fi, and any VPN is off
 - macOS allows Local Network access in System Settings, Privacy & Security
 - the network isn't a guest network, which often stops devices seeing each other

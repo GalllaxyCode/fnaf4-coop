@@ -9,6 +9,7 @@ void rules_init(bool is_host);
 void rules_setup(int mode, int side); /* before each tick */
 bool rules_host_resume(Local *l, uint32_t now); /* a dead host reloads the night it is still running */
 bool rules_map_open(void);
+bool rules_may_follow(int frame); /* a client may go to the host's frame */
 void rules_map_click(int x, int y, uint32_t now);
 void rules_command(int zone);
 void rules_frame(void); /* keeps the frame's event patches applied */
