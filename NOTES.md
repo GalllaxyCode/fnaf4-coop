@@ -1,7 +1,8 @@
 # Five Nights at Freddy's 4: working notes
 
-Phase reached: 6 (shared night runs in the game on one Mac, two instances), no claim issue (owner declined), QA level `none`.
-Last updated 2026-11-01.
+Phase reached: 6 (shared nights played by the owner and a friend on two Macs, and on Windows per the
+owner), no claim issue (owner declined), QA level `none`.
+Last updated 2026-11-02.
 
 ## Identity
 
@@ -13,7 +14,7 @@ Last updated 2026-11-01.
 | Second exe | `HalloweenEdition.exe`, SHA-256 `cb31f6ce460beff1bb4d1a9ae7f16e346c58a743af9d01a41a10489e3df43354` |
 | Engine | Clickteam Fusion 2.5 runtime, version resource 3,0,288,3 (build 288) |
 | Binary | 32-bit PE, PE timestamp 2017-03-20, data in an overlay at 0x108800 (`wwww` pack header) |
-| OS | Windows only on Steam. Owner runs it on macOS through Wine, see below |
+| OS | Windows only on Steam. Owner runs it on macOS through Wine, see below, and reports it works on Windows |
 
 ## Triage answers
 
@@ -224,6 +225,15 @@ Last updated 2026-11-01.
   sent Fredbear away with no death. A survivor's light showed Nightmare in the hall. Fredbear picked by
   one player and Nightmare by the other shared one Nightmare.
 
+- Owner reports the mod works on Windows, own test, 2026-11-02. Windows version and which modes were
+  played are unknown. No Windows run was made from here.
+- Human play on two Macs, from the owner's logs (2026-11-01, v0.3.0 to v0.3.1, Wi-Fi 10.91.0.0/20): the
+  owner joined a friend's room at 10.91.2.79, by address on v0.3.0 and by clicking it in the room list on
+  v0.3.1. Versus with Last one standing and True cooperative nights were played, a Nightmare kill
+  was shared (`shared scare 8`), and the Chica loop above was hit in True cooperative.
+- On v0.3.1 the room list showed the friend's room 4.0 s after the panel opened. The ini held
+  `last_room`=10.91.2.79, so either the probe to it or the sweep found it; the log doesn't say which.
+
 ## Derived
 
 - The solver's work targets Android builds, so per ground rule 5 nothing from it applies to
@@ -244,18 +254,17 @@ Last updated 2026-11-01.
 - Real Steam: whether Windows Steam runs signed in under GPTK beside the game, whether `steam_api.dll`
   loads there, the callback and message offsets (from the playbook, measured on Windows), lobby
   creation, sessions, Join Game and invites between two accounts. Nothing has run against real Steam.
-- Probing between two machines. Runs so far reached a host on the same Mac, whose address is the first
-  one tried. The sweep's coverage of a /20 was checked in unit tests only.
+- Which probe found the friend's room across machines: the one to `last_room`, or the sweep. A room on
+  another machine with no `last_room` saved hasn't been seen found. The sweep's coverage of a /20 was
+  checked in unit tests only.
 - Whether the GitHub button reaches a macOS browser. ShellExecute returned success inside Wine.
 - The BB minigame in True cooperative, rescue while the host is the victim, missed rescues in the
   real game, Foxy and Chica as players, balance of every number in the modes.
 - Whether a background copy ignores the mouse on a real Mac.
 - Whether the overlay looks right on screen. Its pixels were checked in in-process captures only.
-- Two machines, or more than two real copies. macOS Local Network permission may block discovery
-  between machines, and one Mac can't show that.
-- Real macOS clicks. Injected hardware events go through Wine's routing but skip macOS itself.
-- Play by a human with real mouse and keyboard. All real-game runs were test scripts, and the
-  walk-away runs moved a per-copy test cursor, not a real macOS mouse.
+- More than two players at once, play between machines on networks other than the owner's, and
+  between a Mac and a Windows PC.
+- Walking away from a door a friend holds, with a real mouse. The runs here moved a per-copy test cursor.
 - A natural Versus kill by Bonnie, Chica or Foxy, with a player walking them to the door. Those scares
   were injected. Fredbear's and Nightmare's natural kills were run.
 - Fredbear or Nightmare in the closet in the real game, and Last one standing with a Nightmare victim
