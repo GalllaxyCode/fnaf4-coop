@@ -101,7 +101,8 @@ Without `steam_api.dll` or a running Steam, nothing changes: the mod works as be
 - The door panel in the room is drawn by the mod, not game art, and only shows after turning to the door.
 - Fredbear's laughs, ambience and the phone are random on each copy.
 - If the host dies with revive or Last one standing on, the night pauses for everyone while the host's game reloads.
-- Story minigames between nights follow the host's screen, but what happens in them is not shared.
+- In the story cutscenes between nights you see each other's child walking around, but each player still talks to people and finishes the scene on their own. The scene ends for everyone when the host's ends.
+- Other players' children in cutscenes are drawn over the game, so they appear in front of tables and doors.
 
 ## How it works
 

@@ -170,6 +170,29 @@ void pos_write(BYTE *o, int x, int y) {
     *(int *)(o + RC_CHANGED) = 1;
 }
 
+/* rCom holds the offsets of the object's rAni and rSpr blocks. Confirmed on the cutscene's boy:
+ * animation 0 standing and 1 walking, frames 0 and 1, the visible flag set. */
+#define RC_OFFSET_ANIMATION 184
+#define RC_OFFSET_SPRITE 188
+#define RA_ANIM_ON 16
+#define RA_ANIM_DIR 24
+#define RA_ANIM_FRAME 68
+#define RS_FLAGS 32
+#define RSFLAG_HIDDEN 0x0001
+
+bool anim_read(BYTE *o, int *anim, int *dir, int *frame, bool *hidden) {
+    if (!o || IsBadReadPtr(o, RC_OFFSET_SPRITE + 4)) return false;
+    int ra = *(int *)(o + RC_OFFSET_ANIMATION), rs = *(int *)(o + RC_OFFSET_SPRITE);
+    WORD flags;
+    if (ra <= 0 || rs <= 0 || ra > 4096 || rs > 4096 || IsBadReadPtr(o + ra, RA_ANIM_FRAME + 4) || IsBadReadPtr(o + rs, RS_FLAGS + 2)) return false;
+    memcpy(anim, o + ra + RA_ANIM_ON, 4);
+    memcpy(dir, o + ra + RA_ANIM_DIR, 4);
+    memcpy(frame, o + ra + RA_ANIM_FRAME, 4);
+    memcpy(&flags, o + rs + RS_FLAGS, 2);
+    *hidden = (flags & RSFLAG_HIDDEN) != 0;
+    return true;
+}
+
 /* Threats sit on a zone with an offset of at most one pixel. */
 bool at_zone(BYTE *o, const wchar_t *zone) {
     int x, y, zx, zy;

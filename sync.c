@@ -36,6 +36,7 @@ static bool recv_on_host(Sync *s, int peer, const Packet *p, uint32_t now_ms) {
     c->station = p->station;
     c->input = p->input;
     c->side = p->side;
+    c->puppet = p->puppet;
     if (p->kill == KILL_NONE && p->station != STATION_NONE) c->safe_station = p->station;
     if (c->have_command && p->command_seq != c->command_seq) c->pending_command = (uint8_t)(p->command_zone + 1);
     c->have_command = true;
@@ -79,13 +80,15 @@ static void fill(const Sync *s, Packet *p, const Local *l) {
     p->frame = l->frame;
     p->input = l->input;
     p->in_level = l->in_level;
+    p->puppet = l->puppet;
     copy_name(p->name, s->name);
 }
 
-static void add_player(Output *out, int station, uint16_t input, int side, int state, const char *name) {
+static void add_player(Output *out, int station, uint16_t input, int side, int state, Puppet puppet, const char *name) {
     if (out->player_count >= SYNC_MAX_PLAYERS) return;
     Player *p = &out->players[out->player_count++];
     p->used = true;
+    p->puppet = puppet;
     p->station = station;
     p->input = input;
     p->side = side;
@@ -237,7 +240,7 @@ static void step_host(Sync *s, uint32_t now_ms, const Local *l, Output *out, Pac
         Peer *c = &s->peers[i];
         if (!peer_here(s, i, now_ms)) continue;
         out->others |= c->input;
-        add_player(out, c->station, c->input, c->side, c->state, c->name);
+        add_player(out, c->station, c->input, c->side, c->state, c->puppet, c->name);
         for (int e = 0; e < EV_COUNT; e++) {
             if (c->pending_events[e] && l->in_level) out->events[e] = true;
             c->pending_events[e] = false;
@@ -254,6 +257,7 @@ static void step_host(Sync *s, uint32_t now_ms, const Local *l, Output *out, Pac
             send->players[n].side = (uint8_t)c->side;
             send->players[n].state = (uint8_t)c->state;
             send->players[n].input = c->input;
+            send->players[n].puppet = c->puppet;
             copy_name(send->players[n].name, c->name);
         }
     }
@@ -329,7 +333,7 @@ static void step_client(Sync *s, uint32_t now_ms, const Local *l, Output *out, P
         out->rescue_station = h->rescue_station;
         out->rescue_left_ms = h->rescue_left_ms;
         copy_name(out->rescue_name, h->rescue_name);
-        add_player(out, h->station, h->input, h->side, h->state, h->name);
+        add_player(out, h->station, h->input, h->side, h->state, h->puppet, h->name);
         if (h->state == PLAYER_ALIVE && on_survivors_side(h->mode, h->side)) out->survivors++;
         for (int i = 0; i < h->player_count; i++) {
             bool me = strncmp(h->players[i].name, s->name, SYNC_NAME_LEN) == 0;
@@ -339,7 +343,7 @@ static void step_client(Sync *s, uint32_t now_ms, const Local *l, Output *out, P
                 out->my_state = s->my_state;
                 continue;
             }
-            add_player(out, h->players[i].station, h->players[i].input, h->players[i].side, h->players[i].state, h->players[i].name);
+            add_player(out, h->players[i].station, h->players[i].input, h->players[i].side, h->players[i].state, h->players[i].puppet, h->players[i].name);
             out->others |= h->players[i].input;
         }
         if (l->in_level && s->my_epoch != 0 && h->epoch == s->my_epoch && h->kill != KILL_NONE && l->kill == KILL_NONE && on_survivors_side(h->mode, l->side)) out->apply_kill = h->kill;

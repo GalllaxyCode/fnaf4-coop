@@ -407,6 +407,25 @@ static void test_fredbear_and_nightmare_are_animatronics(void) {
     run(100);
     CHECK(a[0].s.peers[1].command_seq == 1, "the move was not received");
 }
+static void test_every_child_in_a_cutscene_reaches_everyone(void) {
+    reset(12);
+    run(100);
+    for (int i = 0; i < PLAYERS; i++) a[i].l.puppet = (Puppet){(int16_t)(4700 + i * 25), 3745, 1, 8, (uint8_t)(i % 2), 1};
+    run(60);
+    for (int i = 0; i < PLAYERS; i++) {
+        int seen = 0;
+        for (int k = 0; k < a[i].o.player_count; k++) {
+            const Puppet *p = &a[i].o.players[k].puppet;
+            int who = a[i].o.players[k].name[1] - '0';
+            if (p->shown && p->x == 4700 + who * 25 && p->y == 3745 && p->anim == 1 && p->dir == 8 && p->frame == who % 2) seen++;
+        }
+        CHECK(seen == PLAYERS - 1, "player %d sees %d of the other children", i, seen);
+    }
+    a[2].l.puppet.shown = 0;
+    run(60);
+    for (int k = 0; k < a[1].o.player_count; k++)
+        if (strcmp(a[1].o.players[k].name, "p2") == 0) CHECK(!a[1].o.players[k].puppet.shown, "a hidden child still shows");
+}
 static void test_a_leaver_ending_the_night_needs_no_scare(void) {
     reset(LEVEL);
     settings(MODE_VERSUS, true);
@@ -491,6 +510,7 @@ int main(void) {
             test_a_host_killed_outside_the_night_frame_is_reported();
             test_a_leaver_ending_the_night_needs_no_scare();
             test_fredbear_and_nightmare_are_animatronics();
+            test_every_child_in_a_cutscene_reaches_everyone();
             test_a_ghost_keeps_its_scare_when_the_host_moves_on();
             test_rescue_saves_the_victim();
             test_missed_rescue_kills_everyone();

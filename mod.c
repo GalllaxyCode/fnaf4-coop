@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "bank.h"
 #include "game.h"
 #include "input.h"
 #include "lobby.h"
@@ -55,6 +56,7 @@ static uint64_t host_steam; /* a client in a Steam room: the host's account, onc
 static bool via_steam; /* this client joined through Steam */
 static SteamOptions steam_options;
 static int cfg_test_no_lan;
+static wchar_t watched_name[24]; /* test only: an object whose pose is logged when it changes */
 static Sync sync_state;
 static Menu menu;
 static Lobby lobby;
@@ -583,6 +585,18 @@ static void script_run(uint32_t elapsed, bool on_title) {
             pos_read(obj(L"living room center"), &cx, &cy);
             logline("dump ai=%d,%d,%d,%d bonnie_rel=%d,%d mark=%d danger=%d", cnt_get(L"Bonnie AI", -1), cnt_get(L"Chica AI", -1), cnt_get(L"Foxy AI", -1), cnt_get(L"Freddy AI", -1), bx - cx, by, cx, cnt_get(L"bonnie danger", -1));
         }
+        else if (strcmp(s->command, "watch") == 0) MultiByteToWideChar(CP_ACP, 0, s->text, -1, watched_name, 24);
+        else if (strcmp(s->command, "dumpobj") == 0) {
+            wchar_t wide[24];
+            char line[600] = "";
+            MultiByteToWideChar(CP_ACP, 0, s->text, -1, wide, 24);
+            BYTE *o = obj(wide);
+            for (int off = 72; o && off < 300; off += 4) {
+                size_t used = strlen(line);
+                snprintf(line + used, sizeof line - used, "%d:%d ", off, *(int *)(o + off));
+            }
+            logline("dumpobj %s %s", s->text, o ? line : "missing");
+        }
         else if (strcmp(s->command, "leave") == 0) run_action(ACTION_LEAVE);
         else if (strcmp(s->command, "shadow") == 0) cnt_set(L"shadow", s->value);
         else if (strcmp(s->command, "chica") == 0) { int x, y; if (pos_read(obj(L"right hall far"), &x, &y)) pos_write(obj(L"Chica"), x + 1, y); }
@@ -650,6 +664,22 @@ static void script_run(uint32_t elapsed, bool on_title) {
         else if (strcmp(s->command, "next") == 0) game_next_frame();
         else if (strcmp(s->command, "bonnie") == 0) { int x, y; if (pos_read(obj(L"left hall far"), &x, &y)) pos_write(obj(L"Bonnie"), x + 1, y); }
     }
+}
+
+static void log_watched(void) {
+    static int last[4] = {-1, -1, -1, -1};
+    BYTE *o = watched_name[0] ? obj(watched_name) : NULL;
+    if (!o) return;
+    int ra = *(int *)(o + 184), rs = *(int *)(o + 188), on, dir, frame;
+    memcpy(&on, o + ra + 16, 4);
+    memcpy(&dir, o + ra + 24, 4);
+    memcpy(&frame, o + ra + 68, 4);
+    WORD flags;
+    memcpy(&flags, o + rs + 32, 2);
+    int now[4] = {*(int *)(o + 220), on, dir, frame};
+    if (memcmp(now, last, sizeof now) == 0) return;
+    memcpy(last, now, sizeof last);
+    logline("pose image=%d anim=%d dir=%d frame=%d flags=%x x=%d y=%d", now[0], on, dir, frame, flags, *(int *)(o + 76), *(int *)(o + 84));
 }
 
 static void log_state(uint32_t now, const Local *l, const Output *o) {
@@ -815,6 +845,11 @@ static void coop_tick(uint32_t now) {
         cfg_test_kill = 0;
     }
 
+    static bool images_logged;
+    if (!images_logged && bank_ready()) {
+        images_logged = true;
+        logline("game images indexed");
+    }
     steam_rooms(now, l.frame);
     if (in_room) {
         net_poll(now);
@@ -866,7 +901,10 @@ static void coop_tick(uint32_t now) {
     overlay_show(&scene);
     key_mute(game_input_blocked() || (in_room && rules_map_open()));
 
-    if (cfg_test_mode) test_tick(now, &l, &o, level_ms);
+    if (cfg_test_mode) {
+        test_tick(now, &l, &o, level_ms);
+        log_watched();
+    }
 }
 
 /* A click can arrive twice, once as a message and once from polling the button. */
@@ -988,6 +1026,15 @@ static BOOL CALLBACK log_child(HWND h, LPARAM depth) {
     return TRUE;
 }
 
+/* The image bank is read once, off the game thread: it is a few hundred megabytes of the exe. */
+static DWORD WINAPI index_images(LPVOID unused) {
+    char exe[MAX_PATH];
+    (void)unused;
+    GetModuleFileNameA(NULL, exe, sizeof exe);
+    bank_open(exe);
+    return 0;
+}
+
 __attribute__((used)) DWORD coop_timeGetTime(void) {
     DWORD now = real_timeGetTime();
     if (!enabled || GetCurrentThreadId() != main_thread) return now;
@@ -1009,6 +1056,7 @@ __attribute__((used)) DWORD coop_timeGetTime(void) {
             logline("network %s mask %s", at, inet_ntoa(m));
         }
         steam_start(&steam_options, logline);
+        CreateThread(NULL, 0, index_images, NULL, 0, NULL);
         if (strcmp(cfg_role, "host") == 0) room_host();
         else if (strcmp(cfg_role, "client") == 0 && cfg_host[0]) room_join_address(cfg_host);
     }

@@ -7,7 +7,7 @@
 #include <stdint.h>
 
 #define SYNC_MAGIC 0x4F433446u /* "F4CO" */
-#define SYNC_VERSION 6
+#define SYNC_VERSION 7
 #define SYNC_MAX_PEERS 7
 #define SYNC_MAX_PLAYERS (SYNC_MAX_PEERS + 1)
 #define SYNC_NAME_LEN 16
@@ -59,6 +59,13 @@ enum { EV_SCARE_BONNIE, EV_SCARE_CHICA, EV_SCARE_FOXY_LEFT, EV_SCARE_FOXY_RIGHT,
 
 enum { KILL_NONE, KILL_BONNIE, KILL_CHICA, KILL_FREDDY, KILL_FOXY, KILL_CUPCAKE, KILL_BONNIE_BED, KILL_FREDDY_BED, KILL_FREDBEAR, KILL_COUNT };
 
+/* A player's child in a story cutscene, in the frame's coordinates, so the others can draw it. */
+typedef struct {
+    int16_t x, y;
+    uint8_t anim, dir, frame; /* the game's own animation, direction (0-31) and frame */
+    uint8_t shown;
+} Puppet;
+
 /* The game this tick. */
 typedef struct {
     int frame; /* -1 before the runtime has a frame */
@@ -72,6 +79,7 @@ typedef struct {
     bool last_standing; /* host only */
     uint8_t command_seq; /* an animatronic player's latest move */
     uint8_t command_zone;
+    Puppet puppet;
     bool events[EV_COUNT];
     int value_count;
     int32_t values[SYNC_VALUES];
@@ -83,6 +91,7 @@ typedef struct {
     uint16_t input;
     int side;
     int state;
+    Puppet puppet;
     char name[SYNC_NAME_LEN];
 } Player;
 
@@ -142,6 +151,7 @@ typedef struct {
     uint16_t rescue_left_ms;
     char rescue_name[SYNC_NAME_LEN];
     char name[SYNC_NAME_LEN];
+    Puppet puppet;
     int32_t values[SYNC_VALUES];
     struct {
         uint8_t station;
@@ -149,6 +159,7 @@ typedef struct {
         uint16_t input;
         uint8_t state;
         uint8_t pad[3];
+        Puppet puppet;
         char name[SYNC_NAME_LEN];
     } players[SYNC_MAX_PLAYERS];
 } Packet;
@@ -168,6 +179,7 @@ typedef struct {
     bool have_command;
     uint8_t command_seq;
     uint8_t pending_command; /* zone + 1 */
+    Puppet puppet;
     char name[SYNC_NAME_LEN];
     bool have_events;
     uint8_t event_counts[EV_COUNT];

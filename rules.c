@@ -1,4 +1,5 @@
 #include "rules.h"
+#include "bank.h"
 #include "game.h"
 #include "input.h"
 #include "menu.h"
@@ -59,6 +60,16 @@ static const short client_off_level[] = {
     451, 452, 453, 454, 455, 469, 470, 476, 477, 478};
 /* Rules the host needs off because the mod merges these values from every player. */
 static const short host_off_level[] = {48, 126, 192, 193, 194, 195};
+/* A client stays in a cutscene until the host's ends, so nobody is pulled back to replay it, and
+ * playing the host's scene leaves the client's own story progress alone (rule 2 saves it). */
+static const short client_off_cutscene[] = {188, 189, 190, 191, 192, 193, 2};
+/* The cutscenes draw black lines over the view, two rows in eight. */
+#define SCANLINE_PERIOD 8
+#define SCANLINE_START 4
+#define SCANLINE_ROWS 2
+#define VIEW_BOY 2 /* `view who` while the player walks the child */
+#define VIEW_CENTER_X 512 /* `screen follow` is the centre of the view */
+#define VIEW_CENTER_Y 384
 #define RULE_TRAP_CAUGHT 20 /* the light sends him back to the chair */
 static const short client_off_minigame[] = {3, 6, 8, 9, RULE_TRAP_CAUGHT, 44};
 
@@ -97,6 +108,9 @@ static const wchar_t *const trap_zones[TRAP_ZONES] = {L"in chair", L"hall stage 
 static const signed char trap_steps[][3] = {
     {TRAP_CHAIR, TRAP_HALL_1, 0}, {TRAP_HALL_1, TRAP_FAR_LEFT, 1}, {TRAP_HALL_1, TRAP_FAR_RIGHT, 2}, {TRAP_FAR_LEFT, TRAP_HALL_2, 0}, {TRAP_FAR_RIGHT, TRAP_HALL_2, 0},
     {TRAP_HALL_2, TRAP_CLOSE_LEFT, 1}, {TRAP_HALL_2, TRAP_CLOSE_RIGHT, 2}, {TRAP_CLOSE_LEFT, TRAP_HALL_3, 0}, {TRAP_CLOSE_RIGHT, TRAP_HALL_3, 0}, {TRAP_HALL_3, TRAP_GOT_YOU, 0}};
+
+/* Which story scene plays comes from each player's save, so the host's is used. */
+static const Row cutscene_rows[] = {{L"scene", ROW_COUNTER, 0}};
 
 static const Row night_title_rows[] = {{L"Night", ROW_COUNTER, 0}, {L"shadow", ROW_COUNTER, 0}};
 
@@ -259,6 +273,9 @@ void rules_frame(void) {
     } else if (minigame && !host) {
         if (evg_is_disabled(9)) return;
         disable_all(client_off_minigame, COUNT(client_off_minigame));
+    } else if (frame == FRAME_CUTSCENE && !host) {
+        if (evg_is_disabled(client_off_cutscene[0])) return;
+        disable_all(client_off_cutscene, COUNT(client_off_cutscene));
     }
 }
 
@@ -350,6 +367,17 @@ void rules_read(Local *l) {
         for (size_t i = 0; i < COUNT(mini_rows); i++)
             if (!row_read(&mini_rows[i], &l->values[i])) return;
         l->value_count = COUNT(mini_rows);
+        return;
+    }
+    if (frame == FRAME_CUTSCENE) {
+        BYTE *boy = obj(L"boy");
+        int x, y, anim, dir, image;
+        bool hidden;
+        if (boy && cnt_get(L"view who", 0) == VIEW_BOY && pos_read(boy, &x, &y) && anim_read(boy, &anim, &dir, &image, &hidden) && !hidden)
+            l->puppet = (Puppet){(int16_t)x, (int16_t)y, (uint8_t)anim, (uint8_t)dir, (uint8_t)image, 1};
+        for (size_t i = 0; i < COUNT(cutscene_rows); i++)
+            if (!row_read(&cutscene_rows[i], &l->values[i])) return;
+        l->value_count = COUNT(cutscene_rows);
         return;
     }
     if (frame == FRAME_WHAT_NIGHT) {
@@ -920,7 +948,37 @@ static void draw_hud(const Output *o, const Local *l, uint32_t now, OverlayScene
     }
 }
 
+/* The child's frames, by bank handle: standing has one direction, walking has four. */
+static unsigned child_image(const Puppet *p) {
+    static const unsigned short walking[4][2] = {{986, 987}, {988, 989}, {990, 991}, {992, 993}};
+    int frame = p->frame & 1;
+    if (p->anim == 0) return 984u + (unsigned)frame;
+    if (p->anim == 1) return walking[(p->dir / 8) & 3][frame];
+    return 0;
+}
+
+/* Every other player's child, drawn with the game's own art over this player's view. */
+static void draw_children(const Output *o, OverlayScene *scene) {
+    int cx, cy;
+    if (!bank_ready() || cnt_get(L"view who", 0) != VIEW_BOY || !pos_read(obj(L"screen follow"), &cx, &cy)) return;
+    for (int i = 0; i < o->player_count && scene->sprite_count < OVERLAY_MAX_SPRITES; i++) {
+        const Puppet *p = &o->players[i].puppet;
+        const BankImage *img = p->shown ? bank_image(child_image(p)) : NULL;
+        if (!img) continue;
+        int x = p->x - (cx - VIEW_CENTER_X) - img->hot_x, y = p->y - (cy - VIEW_CENTER_Y) - img->hot_y;
+        if (x + img->w <= 0 || y + img->h <= 0 || x >= 2 * VIEW_CENTER_X || y >= 2 * VIEW_CENTER_Y) continue;
+        scene->sprites[scene->sprite_count++] = (OverlaySprite){x, y, img->w, img->h, img->argb, SCANLINE_PERIOD, SCANLINE_START, SCANLINE_ROWS};
+        if (scene->bubble_count < OVERLAY_MAX_BUBBLES) {
+            OverlayBubble *b = &scene->bubbles[scene->bubble_count++];
+            b->x = x + img->w / 2;
+            b->y = y - 6;
+            snprintf(b->text, OVERLAY_TEXT_LEN, "%s", o->players[i].name);
+        }
+    }
+}
+
 void rules_scene(const Output *o, const Local *l, uint32_t now, OverlayScene *scene) {
+    if (game_frame() == FRAME_CUTSCENE) draw_children(o, scene);
     static uint32_t last;
     static double left_open = 1, right_open = 1, closet_open = 1;
     uint32_t dt = now - last;
@@ -1087,6 +1145,8 @@ void rules_apply(const Output *o, const Local *l, uint32_t now) {
             mirror_trap(o->values);
         } else if (frame == FRAME_WHAT_NIGHT) {
             apply_rows(night_title_rows, COUNT(night_title_rows), o->values);
+        } else if (frame == FRAME_CUTSCENE) {
+            apply_rows(cutscene_rows, COUNT(cutscene_rows), o->values);
         }
     }
     nightmare_rounds(o, l, now);

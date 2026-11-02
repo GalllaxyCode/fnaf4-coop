@@ -8,6 +8,7 @@
 #define FRAME_LEVEL 3
 #define FRAME_PLUSHTRAP 7
 #define FRAME_BB 18
+#define FRAME_CUTSCENE 12
 
 void game_init(BYTE *exe_base);
 bool game_begin(void);
@@ -27,6 +28,8 @@ void av_write(BYTE *o, int index, int value);
 bool pos_read(BYTE *o, int *x, int *y);
 void pos_write(BYTE *o, int x, int y);
 bool at_zone(BYTE *o, const wchar_t *zone);
+/* An active object's animation, direction (0-31) and frame, and whether it is hidden. */
+bool anim_read(BYTE *o, int *anim, int *dir, int *frame, bool *hidden);
 
 /* Event rules, addressed by their number in the frame's sheet. */
 int evg_count(void);

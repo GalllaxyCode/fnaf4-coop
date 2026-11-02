@@ -184,6 +184,24 @@ Last updated 2026-11-02.
   counts a kill made there. A host that isn't the last death watches 4.5 s, then reloads the night.
 - Animatronic players get no scare and stay on the map. A host playing one ends the night 1.5 s after a
   kill, and a client playing one follows the host, but not into frame 15.
+- Cutscenes (frame 12, 0.5.0): the child is `boy` (OI 253), placed on `hitbox` every frame; `screen
+  follow` is the view's centre while `view who` = 2. Which scene plays comes from each save (`scene`), so
+  two players got different scenes. Every rule acts on every `boy`, so a second instance in the game
+  would have run one player's dialog and doors for the other. Instead each copy reads its own boy's
+  pose and the others draw it in the overlay with art read from the player's own exe.
+- Object layout, read from the SDK and confirmed live: rCom at 184, rcImage 220, rcOldX 260; rAni at
+  +[184] (462 here): raAnimOn +16, raAnimDir +24, raAnimFrame +68; rSpr at +[188] (542), flags +32.
+  The runtime's rcImage (69, 70 standing) isn't the bank handle (984, 985), so the pose is sent, and a
+  table from the object's animations maps it: standing 984-985, walking 986-993 by direction 0/8/16/24.
+- Image bank: chunk 0x6666, flags 0, 1281 images, per image handle, unpacked size, packed size, zlib.
+  Unpacked: 32-byte header (sizes, mode, flags, hotspot, transparent colour), 24-bit BGR rows padded to
+  an even width, then alpha rows padded to 4. The boy's frames are 84x155 with alpha. bank.c reads it
+  in about a second on a thread at start; the decoded pixels match a separate Python reader.
+- Cutscenes draw black lines on view rows 4-5 of every 8; the overlay leaves those rows of a child
+  empty so the lines cross it as they cross everything else.
+- Real game, two copies, client's save on scene 4, host's on 2: both played the host's scene, each saw
+  the other's child at its position with its name, the client walked 150 px and the host saw it there.
+  The host's save went to 3; the client's stayed at 4 once rule 2 was off on clients.
 - Steam (0.4.0), built from playbook/networking-steam-spacewar.md: app 480, `steam_api.dll` loaded at run
   time through the flat API with manual callback dispatch, friends-only lobby with key `fnaf4coop` =
   SYNC_VERSION, rich presence `connect`, unreliable NoNagle messages on channel 0, sessions accepted for
@@ -264,6 +282,8 @@ Last updated 2026-11-02.
 - Whether the overlay looks right on screen. Its pixels were checked in in-process captures only.
 - More than two players at once, play between machines on networks other than the owner's, and
   between a Mac and a Windows PC.
+- Cutscene children walking left, up and down: those frames come from the animation table, but only
+  standing and walking right were seen live. Scenes other than 2, and players in different rooms.
 - Walking away from a door a friend holds, with a real mouse. The runs here moved a per-copy test cursor.
 - A natural Versus kill by Bonnie, Chica or Foxy, with a player walking them to the door. Those scares
   were injected. Fredbear's and Nightmare's natural kills were run.

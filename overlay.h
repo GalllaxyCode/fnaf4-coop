@@ -2,6 +2,7 @@
 #ifndef OVERLAY_H
 #define OVERLAY_H
 #include <stdbool.h>
+#include <stdint.h>
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -23,6 +24,14 @@ typedef struct {
     int knob_u; /* knob position across the door, in percent */
     bool louver; /* slatted closet door instead of a panelled one */
 } OverlayQuad;
+
+/* Game art at a position in the view, drawn at the game's own scale. */
+#define OVERLAY_MAX_SPRITES 8
+typedef struct {
+    int x, y, w, h; /* top left, in view pixels */
+    const uint32_t *argb; /* w * h pixels, 0xAARRGGBB */
+    int gap_period, gap_start, gap_rows; /* view rows left empty, so the game's own lines show through */
+} OverlaySprite;
 
 #define OVERLAY_MAX_RECTS 40
 #define OVERLAY_MAX_TEXTS 40
@@ -52,6 +61,8 @@ typedef struct {
     OverlayBubble bubbles[OVERLAY_MAX_BUBBLES];
     int quad_count;
     OverlayQuad quads[OVERLAY_MAX_QUADS];
+    int sprite_count;
+    OverlaySprite sprites[OVERLAY_MAX_SPRITES];
 } OverlayScene;
 
 void overlay_show(const OverlayScene *scene);

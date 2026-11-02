@@ -200,6 +200,26 @@ static void draw_text(int x, int y, const char *text, int scale, unsigned color)
     }
 }
 
+/* Nearest pixel, so pixel art stays sharp at any window size. */
+static void draw_sprite(const OverlaySprite *s, double sx, double sy) {
+    int x0 = (int)(s->x * sx), y0 = (int)(s->y * sy), x1 = (int)((s->x + s->w) * sx), y1 = (int)((s->y + s->h) * sy);
+    if (x1 <= 0 || y1 <= 0 || x0 >= width || y0 >= height) return;
+    for (int y = y0 < 0 ? 0 : y0; y < y1 && y < height; y++) {
+        if (s->gap_period > 0) {
+            int view_y = (int)(y / sy);
+            if (((view_y - s->gap_start) % s->gap_period + s->gap_period) % s->gap_period < s->gap_rows) continue;
+        }
+        int sy_ = (int)((y - y0) / sy);
+        if (sy_ >= s->h) sy_ = s->h - 1;
+        for (int x = x0 < 0 ? 0 : x0; x < x1 && x < width; x++) {
+            int sx_ = (int)((x - x0) / sx);
+            if (sx_ >= s->w) sx_ = s->w - 1;
+            uint32_t c = s->argb[sy_ * s->w + sx_];
+            blend(x, y, c & 0xFFFFFF, (int)(c >> 24));
+        }
+    }
+}
+
 static void draw_bubble(const OverlayBubble *b, double sx, double sy) {
     int scale = (int)(sy * 2.4 + 0.5);
     if (scale < 1) scale = 1;
@@ -304,7 +324,7 @@ void overlay_show(const OverlayScene *scene) {
     if (!create_window() || !GetClientRect(game, &r) || !ClientToScreen(game, &origin)) return;
     int w = r.right, h = r.bottom;
     if (w <= 0 || h <= 0 || IsIconic(game)) return;
-    if (scene->bubble_count == 0 && scene->quad_count == 0 && scene->rect_count == 0) {
+    if (scene->bubble_count == 0 && scene->quad_count == 0 && scene->rect_count == 0 && scene->sprite_count == 0) {
         overlay_hide();
         return;
     }
@@ -316,6 +336,7 @@ void overlay_show(const OverlayScene *scene) {
         for (int i = 0; i < scene->rect_count; i++) draw_rect(&scene->rects[i], sx, sy);
         for (int i = 0; i < scene->text_count; i++) draw_label(&scene->texts[i], sx, sy);
         for (int i = 0; i < scene->quad_count; i++) draw_quad(&scene->quads[i], sx, sy);
+        for (int i = 0; i < scene->sprite_count; i++) draw_sprite(&scene->sprites[i], sx, sy);
         for (int i = 0; i < scene->bubble_count; i++) draw_bubble(&scene->bubbles[i], sx, sy);
         shown = *scene;
         GdiFlush();
