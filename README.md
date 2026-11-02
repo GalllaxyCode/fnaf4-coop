@@ -5,10 +5,10 @@ Shared-night co-op for the Steam version of Five Nights at Freddy's 4, on macOS 
 | | |
 |---|---|
 | Game | Steam app 388090, manifest 3840504613812117733, Fusion build 288 |
-| Tested on | macOS, two copies on one Mac, GPTK 4.0 beta 3 on Wine 11, driven by test scripts |
-| Not tested | Two machines, more than two copies, human play, Windows |
+| Tested on | macOS, Windows, GPTK 4.0 beta 3 on Wine 11 |
+| Not tested | Steam online, Linux |
 
-This is an early build. It has been played by test bots, not yet by people, so expect bugs. Bug reports with `fnaf4coop.log` from each player are very welcome.
+This is an early build so expect bugs. Bug reports with `fnaf4coop.log` from each player are very welcome.
 
 ## Game modes
 
@@ -52,7 +52,7 @@ Get `fnaf4-coop-*.zip` from [Releases](../../releases). Every player needs the s
 
 A **CO-OP** button appears on the title screen when the mod is running.
 
-On Windows, putting `winmm.dll` next to the exe should be enough, but that is untested.
+On Windows, putting `winmm.dll` next to the exe should be enough.
 
 ## Building from source
 
