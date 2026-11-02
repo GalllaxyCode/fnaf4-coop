@@ -221,6 +221,30 @@ static void test_sweep_starts_near_and_covers_the_network(void) {
     CHECK(lobby_sweep_address(0x0A000005u, 0xFF000000u, LOBBY_SWEEP_MAX) == 0, "a huge network must be capped");
 }
 
+static void test_steam_rooms_sit_beside_wifi_rooms(void) {
+    Lobby l;
+    Announce a;
+    lobby_clear(&l);
+    memset(&a, 0, sizeof a);
+    a.magic = LOBBY_MAGIC;
+    a.version = SYNC_VERSION;
+    a.session = 7;
+    strcpy(a.name, "LAN");
+    CHECK(lobby_note(&l, &a, 10, 0), "wifi room");
+    CHECK(lobby_note_steam(&l, 0x0186000000000001ULL, "Friend", 0), "steam room");
+    CHECK(lobby_note_steam(&l, 0x0186000000000001ULL, "Friend", 500) && lobby_count(&l) == 2, "steam room twice");
+    CHECK(!lobby_note_steam(&l, 0, "Nobody", 0), "a room with no lobby");
+    const Room *steam = NULL, *lan = NULL;
+    for (int i = 0; i < lobby_count(&l); i++) {
+        if (lobby_room(&l, i)->steam_lobby) steam = lobby_room(&l, i);
+        else lan = lobby_room(&l, i);
+    }
+    CHECK(steam && strcmp(steam->name, "Friend") == 0 && steam->address == 0, "steam room fields");
+    CHECK(lan && lan->steam_lobby == 0 && lan->address == 10, "wifi room fields");
+    lobby_expire(&l, 4000);
+    CHECK(lobby_count(&l) == 0, "rooms never expired");
+}
+
 static void test_the_panel_shows_the_version(void) {
     Menu m;
     Lobby l;
@@ -238,6 +262,7 @@ static void test_the_panel_shows_the_version(void) {
 int main(void) {
     test_sweep_starts_near_and_covers_the_network();
     test_the_panel_shows_the_version();
+    test_steam_rooms_sit_beside_wifi_rooms();
     test_rooms();
     test_names();
     test_panel_flow();

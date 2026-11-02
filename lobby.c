@@ -11,6 +11,7 @@ bool lobby_note(Lobby *l, const Announce *a, uint32_t address, uint32_t now_ms) 
     for (int i = 0; i < LOBBY_MAX_ROOMS && !slot; i++)
         if (!l->rooms[i].used) slot = &l->rooms[i];
     if (!slot) return false;
+    memset(slot, 0, sizeof *slot);
     slot->used = true;
     slot->session = a->session;
     slot->address = address;
@@ -19,6 +20,23 @@ bool lobby_note(Lobby *l, const Announce *a, uint32_t address, uint32_t now_ms) 
     slot->seen_ms = now_ms;
     memcpy(slot->name, a->name, SYNC_NAME_LEN);
     slot->name[SYNC_NAME_LEN - 1] = 0;
+    lobby_clean_name(slot->name, SYNC_NAME_LEN);
+    return true;
+}
+
+bool lobby_note_steam(Lobby *l, uint64_t steam_lobby, const char *name, uint32_t now_ms) {
+    Room *slot = NULL;
+    if (!steam_lobby) return false;
+    for (int i = 0; i < LOBBY_MAX_ROOMS; i++)
+        if (l->rooms[i].used && l->rooms[i].steam_lobby == steam_lobby) slot = &l->rooms[i];
+    for (int i = 0; i < LOBBY_MAX_ROOMS && !slot; i++)
+        if (!l->rooms[i].used) slot = &l->rooms[i];
+    if (!slot) return false;
+    memset(slot, 0, sizeof *slot);
+    slot->used = true;
+    slot->steam_lobby = steam_lobby;
+    slot->seen_ms = now_ms;
+    strncpy(slot->name, name ? name : "", SYNC_NAME_LEN - 1);
     lobby_clean_name(slot->name, SYNC_NAME_LEN);
     return true;
 }

@@ -72,7 +72,27 @@ If rooms never appear, check that:
 - macOS allows Local Network access in System Settings, Privacy & Security
 - the network isn't a guest network, which often stops devices seeing each other
 
-Problems are logged to `fnaf4coop.log` next to the exe. Over the internet, the host must be reachable on UDP 47114, for example over Tailscale, and friends join by address.
+Problems are logged to `fnaf4coop.log` next to the exe.
+
+## Playing with friends on other networks (Steam)
+
+Friends on different Wi-Fi networks can play through Steam, with no addresses and no router setup. Traffic goes through Valve's free relay network. **This is new and untested on real Steam so far**: it has only been tested with a stand-in that imitates Steam.
+
+What every player needs:
+
+1. **Steam for Windows**, installed inside the same Wine setup the game runs in, signed in and running while you play. The Mac Steam app can't be used for this.
+2. **`steam_api.dll`** next to `FiveNightsatFreddys4.exe`. Use the 32-bit one, `Windows-x86/steam_api.dll` from the [Steamworks.NET Standalone release 2025.164.1](https://github.com/rlabrecque/Steamworks.NET/releases), SHA-256 `fdafb7c65ec7d4182b42bf92cc8671c68e4dc547cc6e613899d2618a47eb65da`. It isn't in this mod's download.
+3. The host and the friend must be **friends on Steam**.
+
+The mod runs as Valve's free sample app 480, "Spacewar", which every Steam account can use, so Steam shows you as playing Spacewar. It writes `steam_appid.txt` with `480` next to the exe if that file is missing.
+
+How to play:
+
+- The host clicks **Host a room** as usual. When Steam is running, the panel says `+ STEAM` and the room is also open to Steam friends.
+- Friends see it in the room list as `NAME - STEAM - JOIN`, or click **Join Game** on the host in their Steam friends list, or type the lobby id from the host's `fnaf4coop.log` into the address box.
+- Friends on the same Wi-Fi can still join the same room the normal way.
+
+Without `steam_api.dll` or a running Steam, nothing changes: the mod works as before over the local network. Over the internet without Steam, the host must be reachable on UDP 47114, for example over Tailscale, and friends join by address.
 
 ## Known issues
 

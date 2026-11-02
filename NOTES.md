@@ -183,6 +183,20 @@ Last updated 2026-11-01.
   counts a kill made there. A host that isn't the last death watches 4.5 s, then reloads the night.
 - Animatronic players get no scare and stay on the map. A host playing one ends the night 1.5 s after a
   kill, and a client playing one follows the host, but not into frame 15.
+- Steam (0.4.0), built from playbook/networking-steam-spacewar.md: app 480, `steam_api.dll` loaded at run
+  time through the flat API with manual callback dispatch, friends-only lobby with key `fnaf4coop` =
+  SYNC_VERSION, rich presence `connect`, unreliable NoNagle messages on channel 0, sessions accepted for
+  lobby members on the host and only the host on a client, sender read at offset 12 or 16 whichever is
+  non-zero. Hosting opens the Wi-Fi room and the Steam lobby together, and a host's peers can be either.
+  Friends' rooms come from GetFriendGamePlayed. Joins come from the room list, Join Game (337), an
+  invite (333), `+connect_lobby` on the command line, or a lobby id typed in the address box.
+- Steam, tested with a stand-in in the mod (fake accounts 76561198860265728 + slot, lobbies as ini files
+  in a shared folder, messages over localhost, a stranger's messages dropped until accepted, lobby
+  creation reported twice). Real game, two copies, Wi-Fi discovery off on both: a client found the
+  host's Steam room and joined, a night started, a death was shared both ways; Join Game joined with no
+  clicks once on the title; a typed lobby id joined; the host closing the room reached the client and
+  removed the lobby; a lobby at version 5 was refused with its own message; a Wi-Fi friend joined a host
+  whose room was also on Steam. With no DLL and no stand-in there were no Steam lines and no files written.
 - Chica: rule 65 fires when the player reaches AV0 17 with Ctrl held and Chica in the hall, and it can
   pass 17 inside one 50 ms tick, so the mod saw 16-41. The scare only counted after a seen 17, because
   the bed turn also uses 41. The host kept her in the hall and the hide replayed about every 0.55 s, with
@@ -227,6 +241,9 @@ Last updated 2026-11-01.
 
 ## Unknown
 
+- Real Steam: whether Windows Steam runs signed in under GPTK beside the game, whether `steam_api.dll`
+  loads there, the callback and message offsets (from the playbook, measured on Windows), lobby
+  creation, sessions, Join Game and invites between two accounts. Nothing has run against real Steam.
 - Probing between two machines. Runs so far reached a host on the same Mac, whose address is the first
   one tried. The sweep's coverage of a /20 was checked in unit tests only.
 - Whether the GitHub button reaches a macOS browser. ShellExecute returned success inside Wine.

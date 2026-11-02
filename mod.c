@@ -17,6 +17,7 @@
 #include "menu.h"
 #include "overlay.h"
 #include "rules.h"
+#include "steam.h"
 #include "sync.h"
 
 #define EXE_TIMESTAMP 0x58CFD2A9u
@@ -27,6 +28,8 @@
 #define REPO_URL "https://github.com/GalllaxyCode/fnaf4-coop"
 #define FRAME_TEAM_LOST 4
 #define JOIN_TIMEOUT_MS 6000
+#define STEAM_JOIN_TIMEOUT_MS 20000 /* entering a lobby goes through Steam's servers */
+#define STEAM_ROOMS_MS 1000
 #define MAX_ADAPTERS 8
 #define PROBES_PER_TICK 16 /* about 320 a second, so a /20 takes 13 s and a /24 under one */
 
@@ -47,6 +50,11 @@ static BYTE *exe_base;
 static SOCKET sock = INVALID_SOCKET, finder = INVALID_SOCKET, prober = INVALID_SOCKET;
 static struct sockaddr_in host_addr;
 static struct sockaddr_in peers[SYNC_MAX_PEERS];
+static uint64_t peer_steam[SYNC_MAX_PEERS]; /* a peer on Steam instead of the network, by account */
+static uint64_t host_steam; /* a client in a Steam room: the host's account, once the lobby is entered */
+static bool via_steam; /* this client joined through Steam */
+static SteamOptions steam_options;
+static int cfg_test_no_lan;
 static Sync sync_state;
 static Menu menu;
 static Lobby lobby;
@@ -166,6 +174,8 @@ static bool net_open(bool bind_port) {
 
 static void room_host(void) {
     memset(peers, 0, sizeof peers);
+    memset(peer_steam, 0, sizeof peer_steam);
+    via_steam = false;
     if (!net_open(true)) {
         menu_set_status(&menu, "Could not open a room on this computer");
         return;
@@ -179,6 +189,8 @@ static void room_host(void) {
     menu.player_count = 1;
     strncpy(menu.my_address, best_address(), LOBBY_ADDRESS_LEN - 1);
     logline("hosting on UDP %d at %s", cfg_port, menu.my_address);
+    /* The same room opens on Steam, for friends on other networks. */
+    if (steam_ready()) steam_host(menu.name);
 }
 
 static void room_join(uint32_t address, int port) {
@@ -190,6 +202,8 @@ static void room_join(uint32_t address, int port) {
     host_addr.sin_family = AF_INET;
     host_addr.sin_addr.s_addr = address;
     host_addr.sin_port = htons((u_short)port);
+    via_steam = false;
+    host_steam = 0;
     sync_init(&sync_state, false, GetTickCount() ^ (GetCurrentProcessId() << 16), menu.name);
     rules_init(false);
     in_room = true;
@@ -200,8 +214,35 @@ static void room_join(uint32_t address, int port) {
     logline("joining %s port %d", inet_ntoa(host_addr.sin_addr), port);
 }
 
+static void room_join_steam(uint64_t lobby_id) {
+    socket_close(&sock);
+    via_steam = true;
+    host_steam = 0;
+    sync_init(&sync_state, false, GetTickCount() ^ (GetCurrentProcessId() << 16), menu.name);
+    rules_init(false);
+    in_room = true;
+    menu.room = ROOM_JOINING;
+    menu.status[0] = 0;
+    menu.player_count = 1;
+    join_started_ms = real_timeGetTime();
+    steam_join(lobby_id);
+}
+
+static bool is_lobby_id(const char *text) {
+    size_t n = strlen(text);
+    if (n < 15) return false;
+    for (size_t i = 0; i < n; i++)
+        if (text[i] < '0' || text[i] > '9') return false;
+    return true;
+}
+
 static void room_join_address(const char *text) {
     struct addrinfo hints, *res = NULL;
+    if (is_lobby_id(text)) {
+        if (steam_ready()) room_join_steam(_strtoui64(text, NULL, 10));
+        else menu_set_status(&menu, "That's a Steam lobby id, and Steam isn't running");
+        return;
+    }
     memset(&hints, 0, sizeof hints);
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_DGRAM;
@@ -231,6 +272,11 @@ static void send_goodbye(void) {
 static void room_leave(const char *status) {
     send_goodbye();
     socket_close(&sock);
+    steam_leave();
+    via_steam = false;
+    host_steam = 0;
+    memset(peer_steam, 0, sizeof peer_steam);
+    menu.steam_open = false;
     in_room = false;
     menu.room = ROOM_NONE;
     menu.player_count = 0;
@@ -249,7 +295,8 @@ static void run_action(MenuAction action) {
     case ACTION_HOST: room_host(); break;
     case ACTION_JOIN_ROOM:
         room = lobby_room(&lobby, menu.join_index);
-        if (room) room_join(room->address, room->port);
+        if (room && room->steam_lobby) room_join_steam(room->steam_lobby);
+        else if (room) room_join(room->address, room->port);
         break;
     case ACTION_JOIN_ADDRESS: room_join_address(menu.address); break;
     case ACTION_LEAVE: room_leave(""); break;
@@ -380,17 +427,21 @@ static void probe_rooms(uint32_t now) {
     }
 }
 
-static int peer_slot(const struct sockaddr_in *from, uint32_t now) {
+/* A peer is either an address on the network or a Steam account, never both. */
+static int peer_slot(const struct sockaddr_in *from, uint64_t steam_id, uint32_t now) {
     int free_slot = -1;
     for (int i = 0; i < SYNC_MAX_PEERS; i++) {
-        if (peers[i].sin_port == from->sin_port && peers[i].sin_addr.s_addr == from->sin_addr.s_addr) return i;
+        if (steam_id ? peer_steam[i] == steam_id : (!peer_steam[i] && peers[i].sin_port == from->sin_port && peers[i].sin_addr.s_addr == from->sin_addr.s_addr)) return i;
         bool stale = sync_state.peers[i].used && now - sync_state.peers[i].last_ms >= SYNC_PEER_TIMEOUT_MS;
-        if ((peers[i].sin_port == 0 || stale) && free_slot < 0) free_slot = i;
+        if (((peers[i].sin_port == 0 && !peer_steam[i]) || stale) && free_slot < 0) free_slot = i;
     }
     if (free_slot >= 0) {
-        peers[free_slot] = *from;
+        memset(&peers[free_slot], 0, sizeof peers[free_slot]);
+        peer_steam[free_slot] = steam_id;
+        if (!steam_id) peers[free_slot] = *from;
         sync_state.peers[free_slot].used = false;
-        logline("player joined from %s", inet_ntoa(from->sin_addr));
+        if (steam_id) logline("player joined over Steam, account %llu", (unsigned long long)steam_id);
+        else logline("player joined from %s", inet_ntoa(from->sin_addr));
     }
     return free_slot;
 }
@@ -398,10 +449,17 @@ static int peer_slot(const struct sockaddr_in *from, uint32_t now) {
 static void net_poll(uint32_t now) {
     Packet p;
     struct sockaddr_in from;
+    uint64_t steam_from;
+    int n;
+    while ((n = steam_receive(&steam_from, &p, sizeof p)) != -1) {
+        if (n != (int)sizeof p) continue;
+        if (sync_state.is_host) sync_recv(&sync_state, peer_slot(NULL, steam_from, now), &p, now);
+        else if (via_steam && steam_from == host_steam) sync_recv(&sync_state, 0, &p, now);
+    }
     if (sock == INVALID_SOCKET) return;
     for (;;) {
         int len = sizeof from;
-        int n = recvfrom(sock, (char *)&p, sizeof p, 0, (struct sockaddr *)&from, &len);
+        n = recvfrom(sock, (char *)&p, sizeof p, 0, (struct sockaddr *)&from, &len);
         if (n < 0) {
             if (WSAGetLastError() == WSAECONNRESET) continue;
             break;
@@ -413,18 +471,54 @@ static void net_poll(uint32_t now) {
             continue;
         }
         if (n != (int)sizeof p) continue;
-        sync_recv(&sync_state, sync_state.is_host ? peer_slot(&from, now) : 0, &p, now);
+        sync_recv(&sync_state, sync_state.is_host ? peer_slot(&from, 0, now) : 0, &p, now);
     }
 }
 
 static void net_send(const Packet *p) {
-    if (sock == INVALID_SOCKET) return;
     if (!sync_state.is_host) {
-        sendto(sock, (const char *)p, sizeof *p, 0, (struct sockaddr *)&host_addr, sizeof host_addr);
+        if (via_steam) steam_send(host_steam, p, sizeof *p);
+        else if (sock != INVALID_SOCKET) sendto(sock, (const char *)p, sizeof *p, 0, (struct sockaddr *)&host_addr, sizeof host_addr);
         return;
     }
-    for (int i = 0; i < SYNC_MAX_PEERS; i++)
-        if (peers[i].sin_port) sendto(sock, (const char *)p, sizeof *p, 0, (struct sockaddr *)&peers[i], sizeof peers[i]);
+    for (int i = 0; i < SYNC_MAX_PEERS; i++) {
+        if (peer_steam[i]) steam_send(peer_steam[i], p, sizeof *p);
+        else if (peers[i].sin_port && sock != INVALID_SOCKET) sendto(sock, (const char *)p, sizeof *p, 0, (struct sockaddr *)&peers[i], sizeof peers[i]);
+    }
+}
+
+/* Steam's side of the panel: friends' rooms, invites the player accepted, and the lobby's progress. */
+static void steam_rooms(uint32_t now, int frame) {
+    static uint32_t last_ms;
+    static bool logged_open;
+    menu.steam = steam_ready();
+    if (!menu.steam) return;
+    steam_tick(now);
+    menu.steam_open = in_room && sync_state.is_host && steam_lobby() != 0;
+    if (menu.steam_open != logged_open) logline(menu.steam_open ? "the room is open on Steam" : "the room is not on Steam");
+    logged_open = menu.steam_open;
+    if (in_room && via_steam && !host_steam) {
+        host_steam = steam_lobby_owner();
+        if (host_steam) logline("talking to the host over Steam, account %llu", (unsigned long long)host_steam);
+        else if (steam_failure()[0] && menu.room == ROOM_JOINING) room_leave(steam_failure());
+    }
+    if (frame == FRAME_TITLE) {
+        uint64_t asked = steam_take_join_request();
+        if (asked) {
+            logline("joining the Steam room the player picked in Steam");
+            if (in_room) room_leave("");
+            menu.open = true;
+            room_join_steam(asked);
+        }
+    }
+    if (in_room || !menu.open || frame != FRAME_TITLE || now - last_ms < STEAM_ROOMS_MS) return;
+    last_ms = now;
+    SteamRoom rooms[STEAM_MAX_FRIEND_ROOMS];
+    int count = steam_friend_rooms(rooms, STEAM_MAX_FRIEND_ROOMS);
+    for (int i = 0; i < count; i++) {
+        bool was_empty = lobby_count(&lobby) == 0;
+        if (lobby_note_steam(&lobby, rooms[i].lobby, rooms[i].name, now) && was_empty) logline("found Steam room %s", rooms[i].name);
+    }
 }
 
 typedef struct { uint32_t at; bool on_title; char command[12]; int value; char text[24]; bool done; } ScriptStep;
@@ -489,6 +583,7 @@ static void script_run(uint32_t elapsed, bool on_title) {
             pos_read(obj(L"living room center"), &cx, &cy);
             logline("dump ai=%d,%d,%d,%d bonnie_rel=%d,%d mark=%d danger=%d", cnt_get(L"Bonnie AI", -1), cnt_get(L"Chica AI", -1), cnt_get(L"Foxy AI", -1), cnt_get(L"Freddy AI", -1), bx - cx, by, cx, cnt_get(L"bonnie danger", -1));
         }
+        else if (strcmp(s->command, "leave") == 0) run_action(ACTION_LEAVE);
         else if (strcmp(s->command, "shadow") == 0) cnt_set(L"shadow", s->value);
         else if (strcmp(s->command, "chica") == 0) { int x, y; if (pos_read(obj(L"right hall far"), &x, &y)) pos_write(obj(L"Chica"), x + 1, y); }
         else if (strcmp(s->command, "map") == 0) rules_map_click(s->value / 10000, s->value % 10000, real_timeGetTime());
@@ -602,9 +697,11 @@ static void update_room_panel(const Output *o, uint32_t now) {
             menu.room = ROOM_JOINED;
             logline("joined the room of %s", sync_state.host.name);
             /* The first place to look next time, when broadcasts don't reach this network. */
-            cfg_last_room = host_addr.sin_addr.s_addr;
-            WritePrivateProfileStringA("coop", "last_room", inet_ntoa(host_addr.sin_addr), cfg_ini);
-        } else if (now - join_started_ms >= JOIN_TIMEOUT_MS) {
+            if (!via_steam) {
+                cfg_last_room = host_addr.sin_addr.s_addr;
+                WritePrivateProfileStringA("coop", "last_room", inet_ntoa(host_addr.sin_addr), cfg_ini);
+            }
+        } else if (now - join_started_ms >= (via_steam ? STEAM_JOIN_TIMEOUT_MS : JOIN_TIMEOUT_MS)) {
             room_leave("Could not reach that room");
             return;
         }
@@ -718,6 +815,7 @@ static void coop_tick(uint32_t now) {
         cfg_test_kill = 0;
     }
 
+    steam_rooms(now, l.frame);
     if (in_room) {
         net_poll(now);
         sync_step(&sync_state, now, &l, &o, &out);
@@ -752,9 +850,11 @@ static void coop_tick(uint32_t now) {
         update_room_panel(&o, now);
         log_station(&l, &o);
         log_room_changes(&l, &o);
-    } else if (l.frame == FRAME_TITLE && menu.open) {
+    } else if (l.frame == FRAME_TITLE && menu.open && !cfg_test_no_lan) {
         find_rooms(now);
         probe_rooms(now);
+    } else if (l.frame == FRAME_TITLE && menu.open) {
+        lobby_expire(&lobby, now);
     }
 
     save_name();
@@ -908,6 +1008,7 @@ __attribute__((used)) DWORD coop_timeGetTime(void) {
             snprintf(at, sizeof at, "%s", inet_ntoa(a));
             logline("network %s mask %s", at, inet_ntoa(m));
         }
+        steam_start(&steam_options, logline);
         if (strcmp(cfg_role, "host") == 0) room_host();
         else if (strcmp(cfg_role, "client") == 0 && cfg_host[0]) room_join_address(cfg_host);
     }
@@ -937,6 +1038,12 @@ static void load_config(void) {
     cfg_test_mode = (int)GetPrivateProfileIntA("test", "test_mode", 0, cfg_ini);
     cfg_test_skip_title = (int)GetPrivateProfileIntA("test", "skip_title_ms", 0, cfg_ini);
     cfg_test_no_broadcast = (int)GetPrivateProfileIntA("test", "no_broadcast", 0, cfg_ini);
+    cfg_test_no_lan = (int)GetPrivateProfileIntA("test", "no_lan", 0, cfg_ini);
+    if (GetPrivateProfileIntA("test", "test_mode", 0, cfg_ini)) {
+        steam_options.mock_slot = (int)GetPrivateProfileIntA("test", "steam_mock", 0, cfg_ini);
+        GetPrivateProfileStringA("test", "steam_mock_dir", "", steam_options.mock_dir, sizeof steam_options.mock_dir, cfg_ini);
+        steam_options.mock_join = GetPrivateProfileIntA("test", "steam_mock_join", 0, cfg_ini) != 0;
+    }
     GetPrivateProfileStringA("test", "script", "", bot, sizeof bot, cfg_ini);
     logf_ = fopen(logp, "w");
     logline("fnaf4coop %s role=%s name=%s", MOD_VERSION, cfg_role, name);

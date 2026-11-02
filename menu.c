@@ -111,17 +111,18 @@ static void draw_lobby(const Menu *m, const Lobby *lobby, uint32_t now_ms, Overl
     text(s, FIELD_X0, 158, 1, ALIGN_LEFT, COLOR_DIM, "YOUR NAME");
     field(s, m, &name_field, m->name, "", m->focus == FOCUS_NAME, now_ms);
     button(s, m, &host_button, "HOST A ROOM");
-    text(s, FIELD_X0, 294, 1, ALIGN_LEFT, COLOR_DIM, "ROOMS ON THIS WI-FI");
+    text(s, FIELD_X0, 294, 1, ALIGN_LEFT, COLOR_DIM, m->steam ? "ROOMS ON THIS WI-FI AND STEAM FRIENDS" : "ROOMS ON THIS WI-FI");
     if (count == 0) text(s, (PANEL_X0 + PANEL_X1) / 2, 370, 1, ALIGN_CENTER, COLOR_DIM, "Looking for rooms...");
     for (int i = 0; i < count; i++) {
         const Room *room = lobby_room(lobby, i);
         Box row = room_row(i);
         char label[OVERLAY_TEXT_LEN];
         rect(s, &row, inside(&row, m->hover_x, m->hover_y) ? COLOR_HOT : COLOR_ROW, 255, 6);
-        snprintf(label, sizeof label, "%s - %d/%d - JOIN", room->name, room->players, SYNC_MAX_PLAYERS);
+        if (room->steam_lobby) snprintf(label, sizeof label, "%s - STEAM - JOIN", room->name);
+        else snprintf(label, sizeof label, "%s - %d/%d - JOIN", room->name, room->players, SYNC_MAX_PLAYERS);
         text(s, row.x0 + 12, row.y0 + 13, 1, ALIGN_LEFT, COLOR_TEXT, label);
     }
-    text(s, FIELD_X0, 526, 1, ALIGN_LEFT, COLOR_DIM, "OR JOIN BY ADDRESS");
+    text(s, FIELD_X0, 526, 1, ALIGN_LEFT, COLOR_DIM, m->steam ? "OR JOIN BY ADDRESS OR STEAM LOBBY ID" : "OR JOIN BY ADDRESS");
     field(s, m, &address_field, m->address, "192.168.1.5", m->focus == FOCUS_ADDRESS, now_ms);
     button(s, m, &address_join, "JOIN");
 }
@@ -162,7 +163,7 @@ static void draw_room(const Menu *m, OverlayScene *s) {
     if (m->room == ROOM_JOINING) {
         text(s, mid, 300, 1, ALIGN_CENTER, COLOR_TEXT, "CONNECTING...");
     } else {
-        if (m->room == ROOM_HOSTING) snprintf(line, sizeof line, "YOUR ROOM - %s", m->my_address);
+        if (m->room == ROOM_HOSTING) snprintf(line, sizeof line, "YOUR ROOM - %s%s", m->my_address, m->steam_open ? " + STEAM" : "");
         else snprintf(line, sizeof line, "%s'S ROOM", m->room_name);
         text(s, mid, 146, 1, ALIGN_CENTER, COLOR_TEXT, line);
         snprintf(line, sizeof line, "%d: %s", m->player_count, m->players);

@@ -30,6 +30,8 @@ typedef struct {
     int mode;
     bool last_standing;
     int side;
+    bool steam; /* Steam is running, so rooms of Steam friends show too */
+    bool steam_open; /* this host's room is also open on Steam */
 } Menu;
 
 void menu_init(Menu *m, const char *name);
@@ -40,7 +42,7 @@ bool menu_click(Menu *m, const Lobby *lobby, int x, int y, MenuAction *action);
 void menu_char(Menu *m, int c, MenuAction *action);
 void menu_escape(Menu *m, MenuAction *action);
 void menu_set_status(Menu *m, const char *text);
-#define MOD_VERSION "0.3.2"
+#define MOD_VERSION "0.4.0"
 
 /* Mode names and side names, also used by the in-game display. */
 const char *menu_mode_name(int mode);

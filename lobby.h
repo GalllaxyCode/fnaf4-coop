@@ -35,6 +35,7 @@ typedef struct {
     uint32_t session;
     uint32_t address; /* network byte order */
     uint16_t port;
+    uint64_t steam_lobby; /* a friend's room on Steam, joined by lobby rather than address */
     int players;
     uint32_t seen_ms;
     char name[SYNC_NAME_LEN];
@@ -46,6 +47,7 @@ typedef struct {
 
 void lobby_clear(Lobby *l);
 bool lobby_note(Lobby *l, const Announce *a, uint32_t address, uint32_t now_ms);
+bool lobby_note_steam(Lobby *l, uint64_t steam_lobby, const char *name, uint32_t now_ms);
 void lobby_expire(Lobby *l, uint32_t now_ms);
 int lobby_count(const Lobby *l);
 const Room *lobby_room(const Lobby *l, int index);
