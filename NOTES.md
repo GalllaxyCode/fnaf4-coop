@@ -184,6 +184,23 @@ Last updated 2026-11-02.
   counts a kill made there. A host that isn't the last death watches 4.5 s, then reloads the night.
 - Animatronic players get no scare and stay on the map. A host playing one ends the night 1.5 s after a
   kill, and a client playing one follows the host, but not into frame 15.
+- Fredbear's sound is channel 27, the `fredbear` loop started silent by rule 359. Rules 238/239 (bed)
+  and 96/97 (closet) set it to 30 while lit, and only rule 360, on Ctrl released, sets it back to 0, so a
+  light kept on after he left kept it playing; on clients rule 348 (off there) never muted it either.
+  Rule 360 now reads F24 (0x87, `quiet_key=135` in the log), held by the mod only while the light is on
+  and he is on the bed or in the closet. Real game, Versus: he reached the bed with the host's light on
+  (gate open), was sent away 1.3 s later and the gate closed while the light stayed on for 12 s. The
+  sound itself wasn't measured here.
+- Movement cues, from the level sheet: Bonnie and Chica set `follow` AV23/AV24 (1-3) in the living room
+  and AV21/AV22 (1-4) in the halls; Fredbear AV11/AV17 = 3; Foxy AV11/AV17 (1-2) in the living room, and
+  plays `foxyrun1`/`foxyrun3` and `runandenter` inside rules 115, 116, 132 and 133, which a written
+  position never runs. Versus played nothing for Foxy, and AI Foxy's hall and closet runs were silent on
+  every client in every mode.
+- Foxy now moves through those rules: the mod sets his roll (AV0) and move flag (AV1), or `what side`
+  for the closet, and writes the position only if the rule didn't move him by the next tick. The host
+  holds rule 111, which rerolls AV0 each second, for that tick. Real game: a player's Foxy made 3 of 3
+  moves by rule on the host and the client; AI Foxy on Night 3 made 4 of 4 by rule on the client. The
+  hall steps of a player's Bonnie and Chica now pick from four sounds, like the game's.
 - Cutscenes (frame 12, 0.5.0): the child is `boy` (OI 253), placed on `hitbox` every frame; `screen
   follow` is the view's centre while `view who` = 2. Which scene plays comes from each save (`scene`), so
   two players got different scenes. Every rule acts on every `boy`, so a second instance in the game

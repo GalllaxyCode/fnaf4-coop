@@ -12,6 +12,11 @@
 
 #define VK_SHIFT_KEY 16
 #define VK_CTRL_KEY 17
+/* Rule 360 silences Fredbear's sound channel when the light goes off. It reads this key instead of
+ * Ctrl, and the mod holds it only while the light is on him, so the sound also stops once he's gone. */
+#define VK_FREDBEAR_LIGHT 0x87 /* F24 */
+#define RULE_FREDBEAR_QUIET 360
+#define RULE_DIRECTION_ROLL 111 /* rolls every animatronic's direction, once a second */
 #define FREDDY_KILL 80
 #define BATTERY_READY 100
 #define GRIP_FULL 1000
@@ -262,6 +267,8 @@ void rules_frame(void) {
         int marker = host ? 192 : 111;
         if (evg_is_disabled(marker)) return;
         patched_literal = NULL;
+        BYTE *key = cond_param(cond_at(evg(RULE_FREDBEAR_QUIET), 0), 0);
+        if (key && *(short *)(key + 4) == VK_CTRL_KEY) *(short *)(key + 4) = VK_FREDBEAR_LIGHT;
         if (host) {
             disable_all(host_off_level, COUNT(host_off_level));
             for (size_t i = 0; i < COUNT(listen_reads); i++)
@@ -548,6 +555,61 @@ static void fredbear_move_sound(int zone) {
     if (zone == Z_LIVING_RIGHT) av_write(obj(L"follow"), 17, 3);
 }
 
+/* Foxy's runs play their sound inside the rule that moves him, so a written position is silent. These
+ * set what the rule checks, and the game moves him with its own sound. Returns false where no rule does. */
+static int closet_side; /* host: a `what side` that sends Foxy into the closet this tick */
+static bool foxy_rule_step(int from, int to, bool now_side) {
+    BYTE *foxy = obj(L"foxy");
+    int roll = -1, side = 0;
+    if (from == Z_CENTER && to == Z_LIVING_LEFT) roll = 1;           /* rule 112 */
+    else if (from == Z_CENTER && to == Z_LIVING_RIGHT) roll = 7;     /* 113 */
+    else if (from == Z_LIVING_RIGHT && to == Z_LIVING_LEFT) roll = 1; /* 114 */
+    else if (from == Z_LIVING_LEFT && to == Z_LIVING_RIGHT) roll = 1; /* 117 */
+    else if (from == Z_LIVING_LEFT && to == Z_LEFT_FAR && !cnt_get(L"viewing left hall", 0)) roll = 10;   /* 116 */
+    else if (from == Z_LIVING_RIGHT && to == Z_RIGHT_FAR && !cnt_get(L"viewing right hall", 0)) roll = 10; /* 115 */
+    else if (from == Z_LEFT_FAR && to == Z_CLOSET) side = 5;          /* 132 */
+    else if (from == Z_RIGHT_FAR && to == Z_CLOSET) side = 1;         /* 133 */
+    if (!foxy || (roll < 0 && !side)) return false;
+    if (roll >= 0) {
+        av_write(foxy, 0, roll);
+        av_write(foxy, 1, 1);
+    } else if (now_side) {
+        side_restore = cnt_get(L"what side", 3);
+        cnt_set(L"what side", side);
+    } else {
+        closet_side = side;
+    }
+    return true;
+}
+
+/* Client: the host's Foxy moved, so this copy's rules move him too, for the sound, the way the
+ * Plushtrap mirror does. A step that didn't land by the next tick is written. */
+static bool foxy_stepping;
+static int foxy_by_rule, foxy_written; /* for the log: moves that played the game's sound, and silent ones */
+static void mirror_foxy(const int32_t *v) {
+    BYTE *foxy = obj(L"foxy");
+    int x, y, mark, unused;
+    if (side_restore >= 0) {
+        cnt_set(L"what side", side_restore);
+        side_restore = -1;
+    }
+    if (!pos_read(foxy, &x, &y) || !pos_read(obj(L"living room center"), &mark, &unused)) return;
+    int hx = v[V_FOXY_X] + mark, hy = v[V_FOXY_Y];
+    if (x == hx && y == hy) {
+        if (foxy_stepping) foxy_by_rule++;
+        foxy_stepping = false;
+        return;
+    }
+    if (!foxy_stepping && foxy_rule_step(zone_of(x, y), zone_of(hx, hy), true)) {
+        foxy_stepping = true;
+        return;
+    }
+    foxy_stepping = false;
+    foxy_written++;
+    av_write(foxy, 1, 0);
+    pos_write(foxy, hx, hy);
+}
+
 static void play_move_sounds(const int32_t *v) {
     BYTE *follow = obj(L"follow");
     int x, y, mark, unused;
@@ -562,16 +624,18 @@ static void play_move_sounds(const int32_t *v) {
         if (z == Z_RIGHT_FAR || z == Z_RIGHT_NEAR) av_write(follow, 22, 1 + rand() % 4);
         else if (z != Z_NONE) av_write(follow, 24, 1 + rand() % 3);
     }
-    if (pos_read(obj(L"foxy"), &x, &y) && (x != v[V_FOXY_X] + mark || y != v[V_FOXY_Y])) {
-        int z = zone_of(v[V_FOXY_X] + mark, v[V_FOXY_Y]);
-        if (z == Z_LIVING_LEFT) av_write(follow, 11, 1 + rand() % 2);
-        else if (z == Z_LIVING_RIGHT) av_write(follow, 17, 1 + rand() % 2);
-    }
     if (pos_read(obj(L"Fredbear"), &x, &y) && (x != v[V_FRED_X] + mark || y != v[V_FRED_Y])) fredbear_move_sound(zone_of(v[V_FRED_X] + mark, v[V_FRED_Y]));
 }
 
 static void apply_rows(const Row *rows, size_t n, const int32_t *values) {
     for (size_t i = 0; i < n; i++) row_write(&rows[i], values[i]);
+}
+
+/* The night's rows, with Foxy's position left to mirror_foxy. */
+static void apply_night_rows(const int32_t *values) {
+    for (size_t i = 0; i < COUNT(night_rows); i++)
+        if (i != V_FOXY_X && i != V_FOXY_Y) row_write(&night_rows[i], values[i]);
+    mirror_foxy(values);
 }
 
 /* Merges every other player's input into the host's simulation. */
@@ -624,6 +688,11 @@ static void host_merge(const Output *o, const Local *l, uint32_t now) {
     if (side_restore >= 0) {
         cnt_set(L"what side", side_restore);
         side_restore = -1;
+    }
+    if (closet_side) {
+        side_restore = cnt_get(L"what side", 3);
+        cnt_set(L"what side", closet_side);
+        closet_side = 0;
     }
     int side = cnt_get(L"what side", 3);
     if (at_zone(foxy, L"left hall far") && (others & IN_SIDE_RIGHT) && side != 5) {
@@ -791,6 +860,24 @@ static bool route_allows(int who, int from, int to) {
     return false;
 }
 
+static int foxy_pending = Z_NONE; /* host: a Foxy move left to the game's rule this tick */
+
+/* A Foxy move given to a rule last tick: done, or written now. */
+static void foxy_settle(void) {
+    if (foxy_pending == Z_NONE) return;
+    BYTE *foxy = obj(L"foxy");
+    int x, y;
+    if (current_zone(SIDE_FOXY) != foxy_pending && pos_read(obj(zones[foxy_pending]), &x, &y)) {
+        av_write(foxy, 1, 0);
+        pos_write(foxy, x + 1, y);
+        foxy_written++;
+    } else {
+        foxy_by_rule++;
+    }
+    foxy_pending = Z_NONE;
+    evg_enable(RULE_DIRECTION_ROLL);
+}
+
 /* The host checks a move the same way the game's random rolls are limited. */
 static void versus_move(int who, int to, uint32_t now) {
     if (who < SIDE_BONNIE || who >= SIDE_COUNT || to < 0 || to >= 10) return;
@@ -804,17 +891,26 @@ static void versus_move(int who, int to, uint32_t now) {
         av_write(o, 1, 1); /* the closet stage rises on this roll */
         return;
     }
+    if (who == SIDE_FOXY && foxy_rule_step(from, to, false)) {
+        /* The roll that picks directions would overwrite the one just set, so it waits a tick. */
+        evg_disable(RULE_DIRECTION_ROLL);
+        foxy_pending = to;
+        return;
+    }
     int x, y;
     if (!pos_read(obj(zones[to]), &x, &y)) return;
     pos_write(o, x + 1, y + (to == Z_LEFT_NEAR || to == Z_RIGHT_NEAR ? 1 : 0));
     av_write(o, 1, 0);
-    if (who == SIDE_BONNIE) av_write(follow, to == Z_LEFT_FAR || to == Z_LEFT_NEAR ? 21 : 23, 1 + rand() % 3);
-    if (who == SIDE_CHICA) av_write(follow, to == Z_RIGHT_FAR || to == Z_RIGHT_NEAR ? 22 : 24, 1 + rand() % 3);
+    /* The game's own cues: hall steps are one of four, living room steps one of three. */
+    if (who == SIDE_BONNIE) av_write(follow, to == Z_LEFT_FAR || to == Z_LEFT_NEAR ? 21 : 23, to == Z_LEFT_FAR || to == Z_LEFT_NEAR ? 1 + rand() % 4 : 1 + rand() % 3);
+    if (who == SIDE_CHICA) av_write(follow, to == Z_RIGHT_FAR || to == Z_RIGHT_NEAR ? 22 : 24, to == Z_RIGHT_FAR || to == Z_RIGHT_NEAR ? 1 + rand() % 4 : 1 + rand() % 3);
+    if (who == SIDE_FOXY) av_write(follow, from == Z_LIVING_LEFT || to == Z_LIVING_LEFT ? 11 : 17, 1 + rand() % 2);
     if (who == SIDE_FREDBEAR || who == SIDE_NIGHTMARE) fredbear_move_sound(to);
 }
 
 static void versus_host(const Output *o, uint32_t now) {
     bool taken[SIDE_COUNT];
+    foxy_settle();
     sides_taken(o, taken);
     if (taken[SIDE_NIGHTMARE]) {
         static const struct { int who; const wchar_t *ai; } rest[] = {{SIDE_BONNIE, L"Bonnie AI"}, {SIDE_CHICA, L"Chica AI"}, {SIDE_FOXY, L"Foxy AI"}, {SIDE_COUNT, L"Freddy AI"}};
@@ -1115,6 +1211,11 @@ void rules_apply(const Output *o, const Local *l, uint32_t now) {
     } else {
         shared_keys(o, l);
     }
+    {
+        BYTE *fred = obj(L"Fredbear");
+        bool lit = l->in_level && key_seen(VK_CTRL_KEY) && (at_zone(fred, L"on bed") || at_zone(fred, L"in closet"));
+        key_force(VK_FREDBEAR_LIGHT, lit);
+    }
     if (host && resume_ticks > 0) {
         resume_ticks--;
         apply_rows(night_rows, COUNT(night_rows), saved);
@@ -1133,7 +1234,7 @@ void rules_apply(const Output *o, const Local *l, uint32_t now) {
     } else if (o->apply_values) {
         if (l->in_level && !force_active) {
             play_move_sounds(o->values);
-            apply_rows(night_rows, COUNT(night_rows), o->values);
+            apply_night_rows(o->values);
         } else if (frame == FRAME_PLUSHTRAP || frame == FRAME_BB) {
             /* The host zeroes this as its light comes on, and the same packet turns this player's light
              * on. The game needs the old value for one frame to show what the light caught. */
@@ -1150,5 +1251,5 @@ void rules_apply(const Output *o, const Local *l, uint32_t now) {
         }
     }
     nightmare_rounds(o, l, now);
-    if (l->in_level) snprintf(debug_line, sizeof debug_line, "kill=%d force=%d others=%03x input=%03x grip=%d", l->kill, force_active, o->others, l->input, grip);
+    if (l->in_level) snprintf(debug_line, sizeof debug_line, "kill=%d force=%d others=%03x input=%03x grip=%d foxy_rule=%d foxy_written=%d fredbear_lit=%d quiet_key=%d", l->kill, force_active, o->others, l->input, grip, foxy_by_rule, foxy_written, key_seen(VK_FREDBEAR_LIGHT), cond_param(cond_at(evg(RULE_FREDBEAR_QUIET), 0), 0) ? *(short *)(cond_param(cond_at(evg(RULE_FREDBEAR_QUIET), 0), 0) + 4) : -1);
 }

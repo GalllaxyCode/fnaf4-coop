@@ -16,6 +16,11 @@ bool key_real(int vk) { return bot_or_real(vk); }
 void key_block(int vk, bool on) { if (vk >= 0 && vk < 256) blocked[vk] = on; }
 bool key_usable(int vk) { return key_real(vk) && !(vk >= 0 && vk < 256 && blocked[vk]); }
 void key_force(int vk, bool down) { if (vk >= 0 && vk < 256) forced[vk] = down; }
+bool key_seen(int vk) {
+    if (muted || vk < 0 || vk >= 256) return false;
+    bool real = real_async && (real_async(vk) & 0x8000);
+    return forced[vk] || ((real || bot[vk]) && !blocked[vk]);
+}
 void key_bot(int vk, bool down) { if (vk >= 0 && vk < 256) bot[vk] = down; }
 bool input_hooked(void) { return hooked; }
 void key_mute(bool on) { muted = on; }
