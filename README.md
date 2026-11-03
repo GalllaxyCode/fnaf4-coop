@@ -54,6 +54,21 @@ A **CO-OP** button appears on the title screen when the mod is running.
 
 On Windows, putting `winmm.dll` next to the exe should be enough.
 
+## Black, silent jumpscares (optional)
+
+A separate, opt-in tool can replace the supported game's jumpscare images with black and silence the associated sounds, including Nightmare. It leaves death events and co-op timing intact. The change is local: each player who wants it needs to make their own copy. The scare images in Extras and the affected scream sound in story scenes are also hidden or silenced.
+
+The tool needs Python 3 and one of the two **unmodified** executables identified in [NOTES.md](NOTES.md). It creates a new file and refuses to overwrite an existing one. Keep the original to restore normal scares. For example:
+
+```sh
+mkdir -p /path/to/blackout-game
+python3 tools/blackout-scares.py /path/to/original/FiveNightsatFreddys4.exe /path/to/blackout-game/FiveNightsatFreddys4.exe
+```
+
+Put the mod's `winmm.dll` beside the new executable and launch it using the same Wine override described above. The Halloween executable can be processed the same way. Saves stay in Wine's existing profile. Use the original executable to play with normal scares again.
+
+The tool is a separate utility; it does not add an in-game toggle. Jumpscares remain in the game's timing and death logic, but their identified image frames are black and their identified samples are silent.
+
 ## Building from source
 
 `./build.sh` builds `dist/winmm.dll` and runs the tests. It needs `brew install mingw-w64`.
