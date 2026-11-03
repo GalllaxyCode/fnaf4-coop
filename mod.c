@@ -20,6 +20,7 @@
 #include "rules.h"
 #include "steam.h"
 #include "sync.h"
+#include "screamers.h"
 
 #define EXE_TIMESTAMP 0x58CFD2A9u
 #define TICK_MS 50
@@ -291,6 +292,60 @@ static void room_leave(const char *status) {
     logline("left the room: %s", status[0] ? status : "by choice");
 }
 
+static void save_name(void);
+
+/* Relaunch beside the current exe so Wine prefix, save path, and the mod's DLL stay the same. */
+static bool restart_screamers(bool enable, bool save_setting) {
+    wchar_t exe[MAX_PATH], target[MAX_PATH], command[32768];
+    bool current_enabled;
+    DWORD n = GetModuleFileNameW(NULL, exe, MAX_PATH);
+    if (!n || n >= MAX_PATH || !screamers_path(exe, enable, target, MAX_PATH, &current_enabled)) {
+        menu_set_status(&menu, "Use the standard game filenames.");
+        return false;
+    }
+    DWORD attrs = GetFileAttributesW(target);
+    if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+        menu_set_status(&menu, "The other game copy is missing.");
+        return false;
+    }
+    if (save_setting) save_name();
+    char old_setting[8];
+    GetPrivateProfileStringA("coop", "screamers", "", old_setting, sizeof old_setting, cfg_ini);
+    if (save_setting && !WritePrivateProfileStringA("coop", "screamers", enable ? "1" : "0", cfg_ini)) {
+        menu_set_status(&menu, "Could not save the setting.");
+        return false;
+    }
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+    memset(&si, 0, sizeof si);
+    memset(&pi, 0, sizeof pi);
+    si.cb = sizeof si;
+    const wchar_t *args = GetCommandLineW();
+    if (*args == L'"') {
+        args++;
+        while (*args && *args != L'"') args++;
+        if (*args) args++;
+    } else while (*args && *args != L' ' && *args != L'\t') args++;
+    int length = swprintf(command, sizeof command / sizeof command[0], L"\"%ls\"%ls", target, args);
+    if (length < 0 || (size_t)length >= sizeof command / sizeof command[0]) {
+        if (save_setting) WritePrivateProfileStringA("coop", "screamers", old_setting[0] ? old_setting : NULL, cfg_ini);
+        menu_set_status(&menu, "Game arguments are too long to restart.");
+        return false;
+    }
+    if (!CreateProcessW(target, command, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+        DWORD error = GetLastError();
+        if (save_setting) WritePrivateProfileStringA("coop", "screamers", old_setting[0] ? old_setting : NULL, cfg_ini);
+        menu_set_status(&menu, "Could not restart the game.");
+        logline("screamers restart failed: %lu", error);
+        return false;
+    }
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    logline("restarting with screamers %s", enable ? "on" : "off");
+    ExitProcess(0);
+    return true;
+}
+
 static void run_action(MenuAction action) {
     const Room *room;
     switch (action) {
@@ -302,6 +357,7 @@ static void run_action(MenuAction action) {
         break;
     case ACTION_JOIN_ADDRESS: room_join_address(menu.address); break;
     case ACTION_LEAVE: room_leave(""); break;
+    case ACTION_SCREAMERS: if (!in_room) restart_screamers(!menu.screamers, true); break;
     case ACTION_GITHUB: logline("opening the repo: %d", (int)(INT_PTR)ShellExecuteA(NULL, "open", REPO_URL, NULL, NULL, SW_SHOWNORMAL)); break;
     default: break;
     }
@@ -1040,6 +1096,14 @@ __attribute__((used)) DWORD coop_timeGetTime(void) {
     if (!enabled || GetCurrentThreadId() != main_thread) return now;
     if (!started) {
         started = true;
+        char choice[8];
+        GetPrivateProfileStringA("coop", "screamers", "", choice, sizeof choice, cfg_ini);
+        if ((strcmp(choice, "0") == 0 || strcmp(choice, "1") == 0) && (choice[0] == '1') != menu.screamers) {
+            if (!restart_screamers(choice[0] == '1', false)) {
+                MessageBoxW(NULL, L"The selected SCREAMERS copy could not be started. Check that both game copies are present beside winmm.dll.", L"FNAF 4 Co-op", MB_OK);
+                ExitProcess(1); /* Never silently start the opposite of the saved preference. */
+            }
+        }
         logline("first tick on the game thread");
         input_install();
         logline("input hook %s", input_hooked() ? "on" : "off");
@@ -1097,6 +1161,12 @@ static void load_config(void) {
     logline("fnaf4coop %s role=%s name=%s", MOD_VERSION, cfg_role, name);
     if (!exe_is_supported()) { logline("this exe is not the supported Steam build, co-op is off"); return; }
     menu_init(&menu, name);
+    wchar_t exe[MAX_PATH], target[MAX_PATH];
+    bool current_enabled = true;
+    DWORD exe_len = GetModuleFileNameW(NULL, exe, MAX_PATH);
+    if (exe_len && exe_len < MAX_PATH && screamers_path(exe, true, target, MAX_PATH, &current_enabled))
+        menu.screamers = current_enabled;
+    else menu.screamers = true;
     lobby_clear(&lobby);
     if (cfg_test_mode) script_parse(bot);
     enabled = true;

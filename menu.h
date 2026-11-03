@@ -10,7 +10,7 @@
 #define MENU_STATUS_LEN 60
 
 typedef enum { ROOM_NONE, ROOM_HOSTING, ROOM_JOINING, ROOM_JOINED } RoomState;
-typedef enum { ACTION_NONE, ACTION_HOST, ACTION_JOIN_ROOM, ACTION_JOIN_ADDRESS, ACTION_LEAVE, ACTION_NAME_CHANGED, ACTION_GITHUB } MenuAction;
+typedef enum { ACTION_NONE, ACTION_HOST, ACTION_JOIN_ROOM, ACTION_JOIN_ADDRESS, ACTION_LEAVE, ACTION_NAME_CHANGED, ACTION_GITHUB, ACTION_SCREAMERS } MenuAction;
 typedef enum { FOCUS_NONE, FOCUS_NAME, FOCUS_ADDRESS } MenuFocus;
 
 typedef struct {
@@ -30,6 +30,7 @@ typedef struct {
     int mode;
     bool last_standing;
     int side;
+    bool screamers; /* local display preference: true uses the original executable */
     bool steam; /* Steam is running, so rooms of Steam friends show too */
     bool steam_open; /* this host's room is also open on Steam */
 } Menu;

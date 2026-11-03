@@ -54,20 +54,19 @@ A **CO-OP** button appears on the title screen when the mod is running.
 
 On Windows, putting `winmm.dll` next to the exe should be enough.
 
-## Black, silent jumpscares (optional)
+## SCREAMERS checkbox (optional)
 
-A separate, opt-in tool can replace the supported game's jumpscare images with black and silence the associated sounds, including Nightmare. It leaves death events and co-op timing intact. The change is local: each player who wants it needs to make their own copy. The scare images in Extras and the affected scream sound in story scenes are also hidden or silenced.
+The CO-OP panel has a local **SCREAMERS** checkbox. Checked uses the original scares; unchecked uses black images and silent scare samples, including Nightmare. The game restarts when you change it, so leave the room first. Your preference and Wine saves stay in place.
 
-The tool needs Python 3 and one of the two **unmodified** executables identified in [NOTES.md](NOTES.md). It creates a new file and refuses to overwrite an existing one. Keep the original to restore normal scares. For example:
+To use the checkbox, keep the original and a blacked-out copy beside `winmm.dll` in the same folder. Create the latter once with Python 3, using one of the unmodified executables identified in [NOTES.md](NOTES.md):
 
 ```sh
-mkdir -p /path/to/blackout-game
-python3 tools/blackout-scares.py /path/to/original/FiveNightsatFreddys4.exe /path/to/blackout-game/FiveNightsatFreddys4.exe
+python3 tools/blackout-scares.py /path/to/game/FiveNightsatFreddys4.exe /path/to/game/FiveNightsatFreddys4.blackout.exe
 ```
 
-Put the mod's `winmm.dll` beside the new executable and launch it using the same Wine override described above. The Halloween executable can be processed the same way. Saves stay in Wine's existing profile. Use the original executable to play with normal scares again.
+For Halloween, use `HalloweenEdition.exe` and `HalloweenEdition.blackout.exe`. The tool refuses to overwrite an existing output and does not change the original. The mod remembers which copy you selected and starts it on subsequent launches; if the selected copy is missing, it stops and reports the error instead of opening the other copy. Leave both filenames unchanged.
 
-The tool is a separate utility; it does not add an in-game toggle. Jumpscares remain in the game's timing and death logic, but their identified image frames are black and their identified samples are silent.
+The blackout replaces the identified scare frames and samples while keeping death events and co-op timing intact. It also blacks out the corresponding Extras images and silences the affected scream sound in story scenes. The setting is local; each player chooses for themselves.
 
 ## Building from source
 
