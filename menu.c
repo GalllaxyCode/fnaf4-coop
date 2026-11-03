@@ -21,6 +21,7 @@
 typedef struct { int x0, y0, x1, y1; } Box;
 
 static const Box coop_button = {422, 628, 602, 672};
+static const Box screamers_box = {478, 112, 702, 140};
 static const Box close_button = {PANEL_X1 - 52, PANEL_Y0 + 12, PANEL_X1 - 16, PANEL_Y0 + 48};
 static const Box name_field = {FIELD_X0, 176, FIELD_X1, 216};
 static const Box host_button = {FIELD_X0, 228, FIELD_X1, 272};
@@ -190,6 +191,8 @@ void menu_draw(const Menu *m, const Lobby *lobby, uint32_t now_ms, OverlayScene 
     rect(s, &panel, COLOR_PANEL, 245, 12);
     text(s, PANEL_X0 + 28, PANEL_Y0 + 12, 2, ALIGN_LEFT, COLOR_TEXT, "CO-OP");
     text(s, PANEL_X0 + 148, PANEL_Y0 + 24, 1, ALIGN_LEFT, COLOR_DIM, "V" MOD_VERSION);
+    snprintf(label, sizeof label, "[%c] SCREAMERS", m->screamers ? 'X' : ' ');
+    button(s, m, &screamers_box, label);
     button(s, m, &close_button, "X");
     button(s, m, &github_button, "GITHUB");
     if (m->room == ROOM_NONE) draw_lobby(m, lobby, now_ms, s);
@@ -225,6 +228,11 @@ bool menu_click(Menu *m, const Lobby *lobby, int x, int y, MenuAction *action) {
     leave_field(m, action);
     if (inside(&close_button, x, y)) {
         m->open = false;
+        return true;
+    }
+    if (inside(&screamers_box, x, y)) {
+        if (m->room != ROOM_NONE) menu_set_status(m, "Leave the room to change SCREAMERS.");
+        else *action = ACTION_SCREAMERS;
         return true;
     }
     if (inside(&github_button, x, y)) {

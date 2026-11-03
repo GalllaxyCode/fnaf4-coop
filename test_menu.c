@@ -259,7 +259,32 @@ static void test_the_panel_shows_the_version(void) {
     CHECK(shown, "no version on the panel");
 }
 
+static void test_screamers_checkbox(void) {
+    Menu m;
+    Lobby l;
+    MenuAction action;
+    OverlayScene scene;
+    bool text_off = false, text_on = false;
+    lobby_clear(&l);
+    menu_init(&m, "A");
+    m.open = true;
+    memset(&scene, 0, sizeof scene);
+    menu_draw(&m, &l, 0, &scene);
+    for (int i = 0; i < scene.text_count; i++) text_off |= strcmp(scene.texts[i].text, "[ ] SCREAMERS") == 0;
+    CHECK(text_off, "unchecked checkbox missing");
+    CHECK(menu_click(&m, &l, 500, 125, &action) && action == ACTION_SCREAMERS, "checkbox action missing");
+    m.screamers = true;
+    memset(&scene, 0, sizeof scene);
+    menu_draw(&m, &l, 0, &scene);
+    for (int i = 0; i < scene.text_count; i++) text_on |= strcmp(scene.texts[i].text, "[X] SCREAMERS") == 0;
+    CHECK(text_on, "checked checkbox missing");
+    m.room = ROOM_JOINED;
+    CHECK(menu_click(&m, &l, 500, 125, &action) && action == ACTION_NONE, "checkbox restarted an active room");
+    CHECK(m.status[0] != 0, "missing explanation for active room");
+}
+
 int main(void) {
+    test_screamers_checkbox();
     test_sweep_starts_near_and_covers_the_network();
     test_the_panel_shows_the_version();
     test_steam_rooms_sit_beside_wifi_rooms();

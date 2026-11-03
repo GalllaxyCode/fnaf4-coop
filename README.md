@@ -54,6 +54,20 @@ A **CO-OP** button appears on the title screen when the mod is running.
 
 On Windows, putting `winmm.dll` next to the exe should be enough.
 
+## SCREAMERS checkbox (optional)
+
+The CO-OP panel has a local **SCREAMERS** checkbox. Checked uses the original scares; unchecked uses black images and silent scare samples, including Nightmare. The game restarts when you change it, so leave the room first. Your preference and Wine saves stay in place.
+
+To use the checkbox, keep the original and a blacked-out copy beside `winmm.dll` in the same folder. Create the latter once with Python 3, using one of the unmodified executables identified in [NOTES.md](NOTES.md):
+
+```sh
+python3 tools/blackout-scares.py /path/to/game/FiveNightsatFreddys4.exe /path/to/game/FiveNightsatFreddys4.blackout.exe
+```
+
+For Halloween, use `HalloweenEdition.exe` and `HalloweenEdition.blackout.exe`. The tool refuses to overwrite an existing output and does not change the original. The mod remembers which copy you selected and starts it on subsequent launches; if the selected copy is missing, it stops and reports the error instead of opening the other copy. Leave both filenames unchanged.
+
+The blackout replaces the identified scare frames and samples while keeping death events and co-op timing intact. It also blacks out the corresponding Extras images and silences the affected scream sound in story scenes. The setting is local; each player chooses for themselves.
+
 ## Building from source
 
 `./build.sh` builds `dist/winmm.dll` and runs the tests. It needs `brew install mingw-w64`.
