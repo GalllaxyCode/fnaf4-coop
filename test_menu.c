@@ -163,8 +163,73 @@ static void test_github_button(void) {
     m.room = ROOM_HOSTING;
     menu_click(&m, &l, 690, 618, &act);
     CHECK(act == ACTION_GITHUB, "room github action %d", act);
-    menu_click(&m, &l, 600, 618, &act);
+    menu_click(&m, &l, 400, 618, &act);
     CHECK(act == ACTION_LEAVE, "leave still works next to it: %d", act);
+}
+
+static bool shows(const OverlayScene *s, const char *text) {
+    for (int i = 0; i < s->text_count; i++)
+        if (strcmp(s->texts[i].text, text) == 0) return true;
+    return false;
+}
+
+static void test_settings_page(void) {
+    Menu m;
+    Lobby l;
+    MenuAction act;
+    OverlayScene s;
+    lobby_clear(&l);
+    menu_init(&m, "x");
+    CHECK(m.jumpscare_volume == 100, "starts at %d", m.jumpscare_volume);
+    menu_click(&m, &l, 500, 650, &act);
+    menu_click(&m, &l, 576, 618, &act);
+    CHECK(m.settings_open && act == ACTION_NONE, "settings button did not open the page");
+    memset(&s, 0, sizeof s);
+    menu_draw(&m, &l, 0, &s);
+    CHECK(shows(&s, "JUMPSCARE VOLUME") && shows(&s, "100") && shows(&s, "BACK") && !shows(&s, "HOST A ROOM"), "page contents");
+    CHECK(s.text_count < OVERLAY_MAX_TEXTS && s.rect_count < OVERLAY_MAX_RECTS, "draw overflow %d %d", s.text_count, s.rect_count);
+
+    menu_click(&m, &l, 288, 272, &act);
+    CHECK(m.jumpscare_volume == 0 && m.dragging, "left end gave %d", m.jumpscare_volume);
+    menu_mouse(&m, 464, 272);
+    CHECK(m.jumpscare_volume == 50, "middle gave %d", m.jumpscare_volume);
+    menu_mouse(&m, 2000, 900);
+    CHECK(m.jumpscare_volume == 100, "past the end gave %d", m.jumpscare_volume);
+    menu_mouse(&m, -50, 272);
+    CHECK(m.jumpscare_volume == 0, "before the start gave %d", m.jumpscare_volume);
+    memset(&s, 0, sizeof s);
+    menu_draw(&m, &l, 0, &s);
+    CHECK(shows(&s, "OFF"), "0 not shown as OFF");
+    menu_release(&m, &act);
+    CHECK(act == ACTION_SETTINGS_CHANGED && !m.dragging, "release action %d", act);
+    menu_release(&m, &act);
+    CHECK(act == ACTION_NONE, "a second release saved again");
+    menu_mouse(&m, 464, 272);
+    CHECK(m.jumpscare_volume == 0, "hovering moved the slider");
+
+    Announce a = announce(1, "Alice");
+    lobby_note(&l, &a, 1, 0);
+    menu_click(&m, &l, 500, 340, &act);
+    CHECK(act == ACTION_NONE && !m.dragging, "a room row worked under the page: %d", act);
+    menu_click(&m, &l, 500, 195, &act);
+    CHECK(m.focus == FOCUS_NONE, "name field focused under the page");
+    menu_click(&m, &l, 576, 618, &act);
+    CHECK(!m.settings_open && m.open, "back did not return");
+    menu_click(&m, &l, 576, 618, &act);
+    menu_escape(&m, &act);
+    CHECK(!m.settings_open && m.open, "escape closed the panel, not the page");
+    menu_escape(&m, &act);
+    CHECK(!m.open, "second escape did not close");
+
+    menu_click(&m, &l, 500, 650, &act);
+    CHECK(m.open && !m.settings_open, "the panel reopened on the settings page");
+    m.room = ROOM_HOSTING;
+    menu_click(&m, &l, 576, 618, &act);
+    menu_click(&m, &l, 400, 618, &act);
+    CHECK(act == ACTION_NONE && m.settings_open, "leave worked under the page: %d", act);
+    menu_click(&m, &l, 600, 272, &act);
+    menu_escape(&m, &act);
+    CHECK(act == ACTION_SETTINGS_CHANGED && !m.dragging, "escape mid-drag lost the change: %d", act);
 }
 
 static void test_room_screen(void) {
@@ -269,6 +334,7 @@ int main(void) {
     test_join_paths();
     test_room_settings();
     test_github_button();
+    test_settings_page();
     test_empty_name_keeps_the_old_one();
     test_room_screen();
     printf("%d menu checks, %d failures\n", checks, failures);

@@ -2,7 +2,7 @@
 
 Phase reached: 6 (shared nights played by the owner and a friend on two Macs, and on Windows per the
 owner), no claim issue (owner declined), QA level `none`.
-Last updated 2026-11-02.
+Last updated 2026-11-03.
 
 ## Identity
 
@@ -268,6 +268,29 @@ Last updated 2026-11-02.
   was shared (`shared scare 8`), and the Chica loop above was hit in True cooperative.
 - On v0.3.1 the room list showed the friend's room 4.0 s after the panel opened. The ini held
   `last_room`=10.91.2.79, so either the probe to it or the sweep found it; the log doesn't say which.
+
+- Jumpscare volume (2026-11-03, read from the Steam exe and mmfs2.dll from the pack). The exe calls MMFS2.dll
+  through a delay-load table (rva 0xAA140, 310 imports, by ordinal only). Speaker action routines sit in the
+  action table at 0x4AF880, entries 388 on (action n at 388 + n): 11 at 0x409500 and 12 at 0x409600 read the
+  channel, then call 0x42CF70, which calls ordinal 1077, PlaySndW(manager, app, number, window, flags, loops,
+  channel), through slot 0x4B2760. Action 17 at 0x409970 calls ordinal 809, SetSndChannelVolume(app, channel,
+  volume), through slot 0x4B27AC. In MMFS2 (0x100120C0) it clamps 0-100, stores the volume at app + 28 * channel
+  + 0x34 and applies main * volume / 100 to the sound playing there. No frame has a sound condition.
+- The number a play passes is the runtime's own, per frame, not the bank handle the event dump shows. Seen
+  live: sound 1 is crickets in the night, distortion in frame 15, title in frame 1; sound 2 is ambience in
+  frame 2. Build 288 keeps each sample's name in the action's parameter (size, code 6, number, flags, name),
+  so the mod looks the number up by name in the frame that is playing it.
+- Jumpscare sounds: scream2 (rule 202, every night kill, channel 16; Extras 42-46 on 3), screamshort (254,
+  Foxy's closet, 16; cutscenes 99-100 on 6), scream3 (Plushtrap and BB rule 45 on 4; Extras 47-48 on 3),
+  distortion (frame 15 on 1, looped). Same names and bank handles in HalloweenEdition.exe, which adds garble and
+  musicbox. Night kills play then set channel 16 to 100; the minigames set channel 4 first.
+- Real game, two copies, test scripts, Night 5: setting 40 and 30 on the host, a forced Bonnie kill played
+  scream2 with channel 16 stored at 40 and 30, and the game's own set to 100 was held there. Setting 0 on the
+  client silenced the shared scream2 and distortion after a goto to frame 15, and both scares still ran to the
+  usual frame change (about 1 s, and 5 s for frame 15). A run with crickets cached as sound 1 then frame 15's
+  sound 1 still read distortion. A real click on the slider at its middle saved jumpscare_volume=50, and a
+  launch with 35 in the ini started at 35. The sound itself was not listened to or measured, only the volume
+  MMFS2 stored. Not run: Foxy's closet scare, Plushtrap, BB, the Extras gallery, cutscene scares, Halloween.
 
 ## Derived
 

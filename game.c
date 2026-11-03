@@ -46,6 +46,8 @@ static int group_count;
 static int indexed_frame = -1, settle_ticks;
 static BYTE *groups_for;
 
+static int event_size(BYTE *e);
+
 static BYTE *read_ptr(BYTE *at) {
     if (IsBadReadPtr(at, sizeof(BYTE *))) return NULL;
     return *(BYTE **)at;
@@ -198,6 +200,61 @@ bool at_zone(BYTE *o, const wchar_t *zone) {
     int x, y, zx, zy;
     if (!pos_read(o, &x, &y) || !pos_read(obj(zone), &zx, &zy)) return false;
     return abs(x - zx) <= 2 && abs(y - zy) <= 2;
+}
+
+/* Speaker actions carry their sample as a parameter: size, code 6, the number the runtime plays it
+ * by, flags, then the sample's name (build 288 keeps names in the events). The number is the one the
+ * runtime passes to MMFS2, not the bank handle a decompiler shows, so names are the stable key. */
+#define PARAM_SAMPLE 6
+#define SAMPLE_NUMBER 4
+#define SAMPLE_NAME 8
+
+static BYTE *events_now(void) {
+    BYTE *r = read_ptr(base + RVA_RUNHEADER);
+    BYTE *frame = r && !IsBadReadPtr(r, RH_FRAME + 4) ? read_ptr(r + RH_FRAME) : NULL;
+    return frame && !IsBadReadPtr(frame, FRAME_EVENTS + 4) ? read_ptr(frame + FRAME_EVENTS) : NULL;
+}
+
+BYTE *game_events_now(void) { return events_now(); }
+
+static bool name_in(BYTE *param, int size, char *out, int len) {
+    int n = 0;
+    out[0] = 0;
+    for (int at = SAMPLE_NAME; at + 2 <= size && n < len - 1; at += 2) {
+        wchar_t c = *(wchar_t *)(param + at);
+        if (!c) break;
+        out[n++] = c < 128 ? (char)c : '?';
+    }
+    out[n] = 0;
+    return n > 0;
+}
+
+bool game_sample_name_at(BYTE *param, unsigned sample, char *out, int len) {
+    out[0] = 0;
+    if (!param || IsBadReadPtr(param, SAMPLE_NAME)) return false;
+    int size = *(short *)param;
+    if (size <= SAMPLE_NAME || size > 512 || IsBadReadPtr(param, (UINT_PTR)size)) return false;
+    if (*(short *)(param + 2) != PARAM_SAMPLE || *(WORD *)(param + SAMPLE_NUMBER) != sample) return false;
+    return name_in(param, size, out, len);
+}
+
+BYTE *game_sample_param(unsigned sample) {
+    BYTE *p = events_now();
+    for (int g = 0; p && g < MAX_GROUPS && !IsBadReadPtr(p, EVG_HEADER) && *(short *)p < 0; g++, p -= *(short *)p) {
+        int group_size = -*(short *)p;
+        if (IsBadReadPtr(p, (UINT_PTR)group_size)) return NULL;
+        BYTE *e = p + EVG_HEADER, *end = p + group_size;
+        for (int i = 0; i < p[2] + p[3] && e + ACT_HEADER <= end; i++, e += event_size(e)) {
+            if (i < p[2] || event_size(e) <= ACT_HEADER) continue;
+            BYTE *param = e + ACT_HEADER;
+            for (int k = 0; k < e[EVENT_PARAMS] && param + SAMPLE_NAME <= e + event_size(e); k++, param += *(short *)param) {
+                int size = *(short *)param;
+                if (size <= 0 || param + size > e + event_size(e)) break;
+                if (*(short *)(param + 2) == PARAM_SAMPLE && *(WORD *)(param + SAMPLE_NUMBER) == sample) return param;
+            }
+        }
+    }
+    return NULL;
 }
 
 int evg_count(void) { return group_count; }

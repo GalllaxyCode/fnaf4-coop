@@ -52,6 +52,10 @@ Get `fnaf4-coop-*.zip` from [Releases](../../releases). Every player needs the s
 
 A **CO-OP** button appears on the title screen when the mod is running.
 
+## Settings
+
+**SETTINGS** in the CO-OP panel has a **Jumpscare volume** slider from 0 to 100. It turns down every jumpscare's sound: Bonnie, Chica, Freddy, Foxy, Fredbear, Nightmare, the cupcake, Plushtrap, BB, the Extras gallery and the cutscene scares. At 0 they make no sound at all. It only changes your own game, works in solo nights too, and is saved in `fnaf4coop.ini`.
+
 On Windows, putting `winmm.dll` next to the exe should be enough.
 
 ## Building from source

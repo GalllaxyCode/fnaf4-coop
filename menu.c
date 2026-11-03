@@ -26,8 +26,14 @@ static const Box name_field = {FIELD_X0, 176, FIELD_X1, 216};
 static const Box host_button = {FIELD_X0, 228, FIELD_X1, 272};
 static const Box address_field = {FIELD_X0, 548, FIELD_X1 - 112, 588};
 static const Box address_join = {FIELD_X1 - 100, 548, FIELD_X1, 588};
-static const Box leave_button = {FIELD_X0, 596, FIELD_X1 - 112, 640};
+static const Box leave_button = {FIELD_X0, 596, FIELD_X1 - 236, 640};
+static const Box settings_button = {FIELD_X1 - 224, 596, FIELD_X1 - 112, 640};
 static const Box github_button = {FIELD_X1 - 100, 596, FIELD_X1, 640};
+/* The jumpscare volume slider: the whole box takes clicks, the track runs between its ends. */
+static const Box volume_slider = {FIELD_X0, 248, FIELD_X1 - 96, 296};
+#define SLIDER_X0 (FIELD_X0 + 8)
+#define SLIDER_X1 (FIELD_X1 - 104)
+#define KNOB_HALF 8
 static const Box mode_prev = {FIELD_X0, 214, FIELD_X0 + 44, 254};
 static const Box mode_next = {FIELD_X1 - 44, 214, FIELD_X1, 254};
 static const Box standing_toggle = {FIELD_X0, 322, FIELD_X1, 362};
@@ -56,6 +62,7 @@ static Box room_row(int index) {
 
 void menu_init(Menu *m, const char *name) {
     memset(m, 0, sizeof *m);
+    m->jumpscare_volume = 100;
     strncpy(m->name, name, SYNC_NAME_LEN - 1);
     lobby_clean_name(m->name, SYNC_NAME_LEN);
     strcpy(m->last_name, m->name);
@@ -157,6 +164,31 @@ static void draw_settings(const Menu *m, OverlayScene *s) {
     }
 }
 
+static int slider_value(int x) {
+    int v = ((x - SLIDER_X0) * 100 + (SLIDER_X1 - SLIDER_X0) / 2) / (SLIDER_X1 - SLIDER_X0);
+    return v < 0 ? 0 : v > 100 ? 100 : v;
+}
+
+static void draw_settings_page(const Menu *m, OverlayScene *s) {
+    int mid = (PANEL_X0 + PANEL_X1) / 2, v = m->jumpscare_volume;
+    int knob = SLIDER_X0 + v * (SLIDER_X1 - SLIDER_X0) / 100;
+    bool hot = m->dragging || inside(&volume_slider, m->hover_x, m->hover_y);
+    char value[8];
+    Box track = {SLIDER_X0, 268, SLIDER_X1, 276}, fill = {SLIDER_X0, 268, knob, 276};
+    Box handle = {knob - KNOB_HALF, 256, knob + KNOB_HALF, 288};
+    text(s, mid, 146, 1, ALIGN_CENTER, COLOR_TEXT, "SETTINGS");
+    text(s, FIELD_X0, 214, 1, ALIGN_LEFT, COLOR_DIM, "JUMPSCARE VOLUME");
+    rect(s, &track, COLOR_FIELD, 255, 4);
+    if (v > 0) rect(s, &fill, COLOR_HOT, 255, 4);
+    rect(s, &handle, hot ? COLOR_TEXT : COLOR_DIM, 255, 6);
+    if (v == 0) snprintf(value, sizeof value, "OFF");
+    else snprintf(value, sizeof value, "%d", v);
+    text(s, (volume_slider.x1 + FIELD_X1) / 2, 263, 1, ALIGN_CENTER, COLOR_TEXT, value);
+    text(s, mid, 330, 1, ALIGN_CENTER, COLOR_DIM, "How loud every jumpscare is.");
+    text(s, mid, 356, 1, ALIGN_CENTER, COLOR_DIM, "At 0 they make no sound.");
+    text(s, mid, 382, 1, ALIGN_CENTER, COLOR_DIM, "Only changes this computer.");
+}
+
 static void draw_room(const Menu *m, OverlayScene *s) {
     char line[OVERLAY_TEXT_LEN];
     int mid = (PANEL_X0 + PANEL_X1) / 2;
@@ -192,7 +224,9 @@ void menu_draw(const Menu *m, const Lobby *lobby, uint32_t now_ms, OverlayScene 
     text(s, PANEL_X0 + 148, PANEL_Y0 + 24, 1, ALIGN_LEFT, COLOR_DIM, "V" MOD_VERSION);
     button(s, m, &close_button, "X");
     button(s, m, &github_button, "GITHUB");
-    if (m->room == ROOM_NONE) draw_lobby(m, lobby, now_ms, s);
+    button(s, m, &settings_button, m->settings_open ? "BACK" : "SETTINGS");
+    if (m->settings_open) draw_settings_page(m, s);
+    else if (m->room == ROOM_NONE) draw_lobby(m, lobby, now_ms, s);
     else draw_room(m, s);
     if (m->status[0]) text(s, (PANEL_X0 + PANEL_X1) / 2, PANEL_Y1 - 16, 1, ALIGN_CENTER, 0xFFB060, m->status);
 }
@@ -200,6 +234,14 @@ void menu_draw(const Menu *m, const Lobby *lobby, uint32_t now_ms, OverlayScene 
 void menu_mouse(Menu *m, int x, int y) {
     m->hover_x = x;
     m->hover_y = y;
+    if (m->dragging) m->jumpscare_volume = slider_value(x);
+}
+
+void menu_release(Menu *m, MenuAction *action) {
+    *action = ACTION_NONE;
+    if (!m->dragging) return;
+    m->dragging = false;
+    *action = ACTION_SETTINGS_CHANGED;
 }
 
 static void leave_field(Menu *m, MenuAction *action) {
@@ -219,6 +261,8 @@ bool menu_click(Menu *m, const Lobby *lobby, int x, int y, MenuAction *action) {
     if (!m->open) {
         if (!inside(&coop_button, x, y)) return false;
         m->open = true;
+        m->settings_open = false;
+        m->dragging = false;
         m->status[0] = 0;
         return true;
     }
@@ -229,6 +273,17 @@ bool menu_click(Menu *m, const Lobby *lobby, int x, int y, MenuAction *action) {
     }
     if (inside(&github_button, x, y)) {
         *action = ACTION_GITHUB;
+        return true;
+    }
+    if (inside(&settings_button, x, y)) {
+        m->settings_open = !m->settings_open;
+        return true;
+    }
+    if (m->settings_open) {
+        if (inside(&volume_slider, x, y)) {
+            m->dragging = true;
+            m->jumpscare_volume = slider_value(x);
+        }
         return true;
     }
     if (m->room != ROOM_NONE) {
@@ -285,5 +340,10 @@ void menu_char(Menu *m, int c, MenuAction *action) {
 void menu_escape(Menu *m, MenuAction *action) {
     *action = ACTION_NONE;
     if (m->focus != FOCUS_NONE) leave_field(m, action);
+    else if (m->settings_open) m->settings_open = false;
     else m->open = false;
+    if (m->dragging && !m->settings_open) {
+        m->dragging = false;
+        *action = ACTION_SETTINGS_CHANGED;
+    }
 }

@@ -32,6 +32,13 @@ bool at_zone(BYTE *o, const wchar_t *zone);
 bool anim_read(BYTE *o, int *anim, int *dir, int *frame, bool *hidden);
 
 /* Event rules, addressed by their number in the frame's sheet. */
+/* The runtime numbers sounds per frame. These find the sample parameter that plays a number in the
+ * current frame's events, and read its name back, checking it still holds that number. They read the
+ * runtime afresh, so they work in the middle of its event loop. */
+BYTE *game_events_now(void);
+BYTE *game_sample_param(unsigned sample);
+bool game_sample_name_at(BYTE *param, unsigned sample, char *out, int len);
+
 int evg_count(void);
 BYTE *evg(int index);
 BYTE *evg_base(void);

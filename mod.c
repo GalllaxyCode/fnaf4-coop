@@ -18,6 +18,8 @@
 #include "menu.h"
 #include "overlay.h"
 #include "rules.h"
+#include "scarevol.h"
+#include "sound.h"
 #include "steam.h"
 #include "sync.h"
 
@@ -303,6 +305,13 @@ static void run_action(MenuAction action) {
     case ACTION_JOIN_ADDRESS: room_join_address(menu.address); break;
     case ACTION_LEAVE: room_leave(""); break;
     case ACTION_GITHUB: logline("opening the repo: %d", (int)(INT_PTR)ShellExecuteA(NULL, "open", REPO_URL, NULL, NULL, SW_SHOWNORMAL)); break;
+    case ACTION_SETTINGS_CHANGED: {
+        char value[8];
+        snprintf(value, sizeof value, "%d", menu.jumpscare_volume);
+        WritePrivateProfileStringA("coop", "jumpscare_volume", value, cfg_ini);
+        logline("jumpscare volume set to %d", menu.jumpscare_volume);
+        break;
+    }
     default: break;
     }
 }
@@ -660,6 +669,8 @@ static void script_run(uint32_t elapsed, bool on_title) {
         else if (strcmp(s->command, "unkey") == 0) key_bot(s->value, false);
         else if (strcmp(s->command, "hour") == 0) cnt_set(L"hour", s->value);
         else if (strcmp(s->command, "kill") == 0) cfg_test_kill = s->value;
+        else if (strcmp(s->command, "jsvol") == 0) menu.jumpscare_volume = scarevol_clamp(s->value);
+        else if (strcmp(s->command, "strace") == 0) sound_trace(s->value != 0);
         else if (strcmp(s->command, "goto") == 0) game_goto(s->value);
         else if (strcmp(s->command, "next") == 0) game_next_frame();
         else if (strcmp(s->command, "bonnie") == 0) { int x, y; if (pos_read(obj(L"left hall far"), &x, &y)) pos_write(obj(L"Bonnie"), x + 1, y); }
@@ -812,6 +823,7 @@ static void coop_tick(uint32_t now) {
     Output o;
     Packet out;
 
+    sound_tick(menu.jumpscare_volume);
     if (!game_begin()) return;
     memset(&l, 0, sizeof l);
     memset(&o, 0, sizeof o);
@@ -954,6 +966,10 @@ static bool menu_message(const MSG *m) {
     bool blocked = game_input_blocked();
     switch (m->message) {
     case WM_MOUSEMOVE:
+        if (menu.dragging) {
+            overlay_view_point(m->pt, &x, &y);
+            menu_mouse(&menu, x, y);
+        }
         return blocked;
     case WM_LBUTTONDOWN:
     case WM_LBUTTONDBLCLK:
@@ -964,6 +980,8 @@ static bool menu_message(const MSG *m) {
         }
         return blocked;
     case WM_LBUTTONUP:
+        menu_release(&menu, &action);
+        run_action(action);
         if (click_taken || blocked) {
             click_taken = false;
             return true;
@@ -1011,6 +1029,11 @@ static void poll_mouse(void) {
         overlay_view_point(at, &x, &y);
         menu_mouse(&menu, x, y);
         if (down && !was_down) menu_press(x, y, "polling");
+    }
+    if (!down && was_down) {
+        MenuAction action;
+        menu_release(&menu, &action);
+        run_action(action);
     }
     was_down = down;
 }
@@ -1097,6 +1120,8 @@ static void load_config(void) {
     logline("fnaf4coop %s role=%s name=%s", MOD_VERSION, cfg_role, name);
     if (!exe_is_supported()) { logline("this exe is not the supported Steam build, co-op is off"); return; }
     menu_init(&menu, name);
+    menu.jumpscare_volume = scarevol_clamp((int)GetPrivateProfileIntA("coop", "jumpscare_volume", SCAREVOL_MAX, cfg_ini));
+    sound_init(exe_base, menu.jumpscare_volume, logline);
     lobby_clear(&lobby);
     if (cfg_test_mode) script_parse(bot);
     enabled = true;

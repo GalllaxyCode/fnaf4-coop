@@ -10,7 +10,7 @@
 #define MENU_STATUS_LEN 60
 
 typedef enum { ROOM_NONE, ROOM_HOSTING, ROOM_JOINING, ROOM_JOINED } RoomState;
-typedef enum { ACTION_NONE, ACTION_HOST, ACTION_JOIN_ROOM, ACTION_JOIN_ADDRESS, ACTION_LEAVE, ACTION_NAME_CHANGED, ACTION_GITHUB } MenuAction;
+typedef enum { ACTION_NONE, ACTION_HOST, ACTION_JOIN_ROOM, ACTION_JOIN_ADDRESS, ACTION_LEAVE, ACTION_NAME_CHANGED, ACTION_GITHUB, ACTION_SETTINGS_CHANGED } MenuAction;
 typedef enum { FOCUS_NONE, FOCUS_NAME, FOCUS_ADDRESS } MenuFocus;
 
 typedef struct {
@@ -32,17 +32,22 @@ typedef struct {
     int side;
     bool steam; /* Steam is running, so rooms of Steam friends show too */
     bool steam_open; /* this host's room is also open on Steam */
+    bool settings_open; /* the settings page is showing instead of the rooms */
+    bool dragging; /* the jumpscare volume slider is held */
+    int jumpscare_volume; /* 0 to 100, this player's own */
 } Menu;
 
 void menu_init(Menu *m, const char *name);
 void menu_draw(const Menu *m, const Lobby *lobby, uint32_t now_ms, OverlayScene *scene);
 void menu_mouse(Menu *m, int x, int y);
+/* The mouse button went up. Ends a slider drag with ACTION_SETTINGS_CHANGED. */
+void menu_release(Menu *m, MenuAction *action);
 /* Returns true when the click belongs to the menu, not the game. */
 bool menu_click(Menu *m, const Lobby *lobby, int x, int y, MenuAction *action);
 void menu_char(Menu *m, int c, MenuAction *action);
 void menu_escape(Menu *m, MenuAction *action);
 void menu_set_status(Menu *m, const char *text);
-#define MOD_VERSION "0.5.1"
+#define MOD_VERSION "0.5.2"
 
 /* Mode names and side names, also used by the in-game display. */
 const char *menu_mode_name(int mode);

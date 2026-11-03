@@ -5,3 +5,5 @@ role=off
 name=Player
 host=
 port=47114
+; 0 to 100, set with SETTINGS in the panel. 0 silences every jumpscare.
+jumpscare_volume=100
