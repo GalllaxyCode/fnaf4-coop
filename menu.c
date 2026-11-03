@@ -184,9 +184,6 @@ static void draw_settings_page(const Menu *m, OverlayScene *s) {
     if (v == 0) snprintf(value, sizeof value, "OFF");
     else snprintf(value, sizeof value, "%d", v);
     text(s, (volume_slider.x1 + FIELD_X1) / 2, 263, 1, ALIGN_CENTER, COLOR_TEXT, value);
-    text(s, mid, 330, 1, ALIGN_CENTER, COLOR_DIM, "How loud every jumpscare is.");
-    text(s, mid, 356, 1, ALIGN_CENTER, COLOR_DIM, "At 0 they make no sound.");
-    text(s, mid, 382, 1, ALIGN_CENTER, COLOR_DIM, "Only changes this computer.");
 }
 
 static void draw_room(const Menu *m, OverlayScene *s) {
