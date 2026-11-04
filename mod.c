@@ -57,6 +57,7 @@ static uint64_t peer_steam[SYNC_MAX_PEERS]; /* a peer on Steam instead of the ne
 static uint64_t host_steam; /* a client in a Steam room: the host's account, once the lobby is entered */
 static bool via_steam; /* this client joined through Steam */
 static SteamOptions steam_options;
+
 static int cfg_test_no_lan;
 static wchar_t watched_name[24]; /* test only: an object whose pose is logged when it changes */
 static Sync sync_state;
@@ -174,6 +175,43 @@ static bool net_open(bool bind_port) {
         return false;
     }
     return true;
+}
+
+static uint64_t friend_ids[MENU_MAX_FRIENDS]; /* the friends on the host's invite page */
+static uint64_t invited_ids[16]; /* friends invited to this lobby */
+
+/* Steam names can be any script; the panel's font has Latin letters only. */
+static void plain_name(const char *from, char *to, int capacity) {
+    int n = 0;
+    bool unknown = false;
+    for (; *from && n < capacity - 1; from++) {
+        unsigned char c = (unsigned char)*from;
+        if (c >= 32 && c <= 126) {
+            to[n++] = (char)c;
+            unknown = false;
+        } else if (!unknown && c >= 0xC0) {
+            to[n++] = '?';
+            unknown = true;
+        }
+    }
+    to[n] = 0;
+}
+
+static bool was_invited(uint64_t id) {
+    for (int i = 0; i < 16; i++)
+        if (invited_ids[i] == id) return true;
+    return false;
+}
+
+static void refresh_invites(void) {
+    SteamFriend found[MENU_MAX_FRIENDS];
+    int count = steam_online_friends(found, MENU_MAX_FRIENDS);
+    for (int i = 0; i < count; i++) {
+        friend_ids[i] = found[i].id;
+        plain_name(found[i].name, menu.friends[i], SYNC_NAME_LEN);
+        menu.invited[i] = was_invited(found[i].id);
+    }
+    menu.friend_count = count;
 }
 
 static void room_host(void) {
@@ -304,6 +342,20 @@ static void run_action(MenuAction action) {
         break;
     case ACTION_JOIN_ADDRESS: room_join_address(menu.address); break;
     case ACTION_LEAVE: room_leave(""); break;
+    case ACTION_INVITE_OPENED:
+        refresh_invites();
+        logline("invite page: %d Steam friends online", menu.friend_count);
+        break;
+    case ACTION_INVITE:
+        if (menu.invite_index >= 0 && menu.invite_index < menu.friend_count && steam_invite(friend_ids[menu.invite_index])) {
+            memmove(invited_ids + 1, invited_ids, sizeof invited_ids - sizeof invited_ids[0]);
+            invited_ids[0] = friend_ids[menu.invite_index];
+            menu.invited[menu.invite_index] = true;
+            menu_set_status(&menu, "Invite sent. They accept it in Steam");
+        } else {
+            menu_set_status(&menu, "Steam didn't send that invite");
+        }
+        break;
     case ACTION_GITHUB: logline("opening the repo: %d", (int)(INT_PTR)ShellExecuteA(NULL, "open", REPO_URL, NULL, NULL, SW_SHOWNORMAL)); break;
     case ACTION_SETTINGS_CHANGED: {
         char value[8];
@@ -500,12 +552,23 @@ static void net_send(const Packet *p) {
 
 /* Steam's side of the panel: friends' rooms, invites the player accepted, and the lobby's progress. */
 static void steam_rooms(uint32_t now, int frame) {
-    static uint32_t last_ms;
+    static uint32_t last_ms, last_invites_ms;
     static bool logged_open;
     menu.steam = steam_ready();
+    snprintf(menu.steam_note, sizeof menu.steam_note, "%s", steam_off_reason());
     if (!menu.steam) return;
     steam_tick(now);
     menu.steam_open = in_room && sync_state.is_host && steam_lobby() != 0;
+    if (menu.steam_open) snprintf(menu.lobby_id, sizeof menu.lobby_id, "%llu", (unsigned long long)steam_lobby());
+    else {
+        menu.lobby_id[0] = 0;
+        menu.invite_open = false;
+        memset(invited_ids, 0, sizeof invited_ids);
+    }
+    if (menu.invite_open && menu.open && now - last_invites_ms >= 2000) {
+        last_invites_ms = now;
+        refresh_invites();
+    }
     if (menu.steam_open != logged_open) logline(menu.steam_open ? "the room is open on Steam" : "the room is not on Steam");
     logged_open = menu.steam_open;
     if (in_room && via_steam && !host_steam) {

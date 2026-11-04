@@ -6,7 +6,7 @@ Shared-night co-op for the Steam version of Five Nights at Freddy's 4, on macOS 
 |---|---|
 | Game | Steam app 388090, manifest 3840504613812117733, Fusion build 288 |
 | Tested on | macOS, Windows, GPTK 4.0 beta 3 on Wine 11 |
-| Not tested | Steam online, Linux |
+| Not tested | Steam online between two real accounts, Linux |
 
 This is an early build so expect bugs. Bug reports with `fnaf4coop.log` from each player are very welcome.
 
@@ -43,7 +43,7 @@ Get `fnaf4-coop-*.zip` from [Releases](../../releases). Every player needs the s
 
    When it finishes, the game is in `~/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steamapps/content/app_388090/depot_388091`. Move it somewhere safe, because that folder is inside Steam's own app files.
 2. **Get a Wine runtime that runs it.** Tested with Game Porting Toolkit 4.0 beta 3 on Wine 11. GPTK 1.1 on Wine 7.7 crashes on this game.
-3. **Add the mod.** Put `winmm.dll` from the zip next to `FiveNightsatFreddys4.exe`. It also works for `HalloweenEdition.exe`.
+3. **Add the mod.** Put `winmm.dll` and `steam_api.dll` from the zip next to `FiveNightsatFreddys4.exe`. It also works for `HalloweenEdition.exe`.
 4. **Launch with this environment variable**, which makes Wine load the mod. In a launcher, add it to the app's environment settings. From a terminal:
 
    ```
@@ -56,7 +56,7 @@ A **CO-OP** button appears on the title screen when the mod is running.
 
 **SETTINGS** in the CO-OP panel has a **Jumpscare volume** slider from 0 to 100. It turns down every jumpscare's sound: Bonnie, Chica, Freddy, Foxy, Fredbear, Nightmare, the cupcake, Plushtrap, BB, the Extras gallery and the cutscene scares. At 0 they make no sound at all. It only changes your own game, works in solo nights too, and is saved in `fnaf4coop.ini`.
 
-On Windows, putting `winmm.dll` next to the exe should be enough.
+On Windows, putting `winmm.dll` and `steam_api.dll` next to the exe should be enough.
 
 ## Building from source
 
@@ -80,21 +80,30 @@ Problems are logged to `fnaf4coop.log` next to the exe.
 
 ## Playing with friends on other networks (Steam)
 
-Friends on different Wi-Fi networks can play through Steam, with no addresses and no router setup. Traffic goes through Valve's free relay network. **This is new and untested on real Steam so far**: it has only been tested with a stand-in that imitates Steam.
+Friends on different networks can play through Steam, with no addresses and no router setup. Traffic goes through Valve's free relay network. **Real Steam between two accounts hasn't been tested from here yet**, only a stand-in that imitates Steam. If it fails for you, send `fnaf4coop.log` from both players.
 
 What every player needs:
 
-1. **Steam for Windows**, installed inside the same Wine setup the game runs in, signed in and running while you play. The Mac Steam app can't be used for this.
-2. **`steam_api.dll`** next to `FiveNightsatFreddys4.exe`. Use the 32-bit one, `Windows-x86/steam_api.dll` from the [Steamworks.NET Standalone release 2025.164.1](https://github.com/rlabrecque/Steamworks.NET/releases), SHA-256 `fdafb7c65ec7d4182b42bf92cc8671c68e4dc547cc6e613899d2618a47eb65da`. It isn't in this mod's download.
+1. **Steam running and signed in.** On Windows that's the normal Steam app. On a Mac it must be Steam for Windows, installed inside the same Wine setup the game runs in.
+2. **`steam_api.dll` next to `FiveNightsatFreddys4.exe`.** It comes in the zip from v0.5.4 on. It's Valve's 32-bit Steamworks library, unchanged, from the [Steamworks.NET Standalone release 2025.164.1](https://github.com/rlabrecque/Steamworks.NET/releases) (`Windows-x86/steam_api.dll`), SHA-256 `fdafb7c65ec7d4182b42bf92cc8671c68e4dc547cc6e613899d2618a47eb65da`. The 64-bit `steam_api64.dll` won't work.
 3. The host and the friend must be **friends on Steam**.
 
-The mod runs as Valve's free sample app 480, "Spacewar", which every Steam account can use, so Steam shows you as playing Spacewar. It writes `steam_appid.txt` with `480` next to the exe if that file is missing.
+Check the top of the CO-OP panel: it says **STEAM ON** when this works. Otherwise it says why it's off, for example `STEAM OFF: NO STEAM_API.DLL`.
+
+The mod runs as Valve's free sample app 480, "Spacewar", which every Steam account can use, so Steam may show you as playing Spacewar. It writes `steam_appid.txt` with `480` next to the exe if that file is missing.
+
+**The Steam overlay (Shift+Tab) doesn't open in FNAF 4**, with or without the mod. The game draws in a way the overlay can't attach to. Players reported this in 2016, before the mod existed. So invites happen in the CO-OP panel instead.
 
 How to play:
 
-- The host clicks **Host a room** as usual. When Steam is running, the panel says `+ STEAM` and the room is also open to Steam friends.
-- Friends see it in the room list as `NAME - STEAM - JOIN`, or click **Join Game** on the host in their Steam friends list, or type the lobby id from the host's `fnaf4coop.log` into the address box.
-- Friends on the same Wi-Fi can still join the same room the normal way.
+1. Everyone starts the game with the mod first.
+2. The host clicks **Host a room**. The panel says `+ STEAM` next to the room.
+3. The host clicks **INVITE STEAM FRIENDS** and clicks a friend's name. The friend gets a normal Steam invite in their Steam chat and accepts it there. Their game then joins.
+4. Friends can also click the room in their list (`NAME - STEAM - JOIN`), click **Join Game** on the host in their Steam friends list, or type the **lobby id** shown on the invite page into the address box.
+
+If a friend accepts an invite while their game isn't running, Steam starts Spacewar instead of FNAF 4. Close it, start FNAF 4, and accept again.
+
+Friends on the same Wi-Fi can still join the same room the normal way.
 
 Without `steam_api.dll` or a running Steam, nothing changes: the mod works as before over the local network. Over the internet without Steam, the host must be reachable on UDP 47114, for example over Tailscale, and friends join by address.
 

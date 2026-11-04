@@ -19,6 +19,11 @@ typedef struct {
 } SteamRoom;
 
 typedef struct {
+    uint64_t id;
+    char name[STEAM_NAME_LEN];
+} SteamFriend;
+
+typedef struct {
     int mock_slot; /* above 0: use the test stand-in as this player */
     char mock_dir[260]; /* the folder the stand-in copies share */
     bool mock_join; /* the stand-in clicks Join Game on the first friend's room it sees */
@@ -29,6 +34,7 @@ typedef void (*SteamLog)(const char *fmt, ...);
 /* Starts Steam if it is there. Returns false, and changes nothing, when it isn't. */
 bool steam_start(const SteamOptions *options, SteamLog log);
 bool steam_ready(void);
+const char *steam_off_reason(void); /* why Steam isn't on, short and in capitals, for the panel */
 void steam_tick(uint32_t now_ms);
 uint64_t steam_me(void);
 
@@ -41,6 +47,10 @@ uint64_t steam_lobby_owner(void);
 const char *steam_failure(void); /* set when creating or joining failed, until the next try */
 uint64_t steam_take_join_request(void); /* a lobby the player chose in Steam, once */
 int steam_friend_rooms(SteamRoom *out, int max); /* friends hosting a co-op room */
+/* Friends who are online, those in a game first. The Steam overlay doesn't open in FNAF 4, so the
+ * panel lists them itself and sends a normal Steam invite to the lobby. */
+int steam_online_friends(SteamFriend *out, int max);
+bool steam_invite(uint64_t friend_id);
 
 /* Unreliable messages to and from other players, by Steam account. */
 bool steam_send(uint64_t to, const void *data, int size);

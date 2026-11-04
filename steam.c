@@ -13,10 +13,15 @@
 #define LOBBY_KEY "fnaf4coop" /* marks our lobbies among everyone's Spacewar lobbies */
 #define LOBBY_FRIENDS_ONLY 1
 #define LOBBY_MAX_MEMBERS SYNC_MAX_PLAYERS
-#define SEND_UNRELIABLE_NO_NAGLE 1
+/* Unreliable 0 | NoNagle 1 | AutoRestartBrokenSession 32: a session the other side refused or let
+ * time out starts again on the next send instead of failing for good. */
+#define SEND_FLAGS (1 | 32)
 #define RESULT_OK 1
 #define FRIEND_FLAG_IMMEDIATE 4
 #define IDENTITY_SIZE 160 /* 136 in the SDK; opaque, only touched through its own calls */
+#define PENDING_MAX 8
+#define PENDING_MS 15000 /* how long a session from a not-yet-member waits for its lobby entry */
+#define ASKED_MAX 16
 
 enum {
     CB_LOBBY_JOIN_REQUESTED = 333,
@@ -35,7 +40,9 @@ static SteamLog say;
 static bool ready, mock;
 static uint64_t me, lobby, owner, join_request;
 static Phase phase;
-static char failure[96], room_name[STEAM_NAME_LEN];
+static char failure[96], room_name[STEAM_NAME_LEN], off_reason[48] = "STEAM OFF";
+
+static void set_off(const char *text) { snprintf(off_reason, sizeof off_reason, "%s", text); }
 
 static void set_failure(const char *text) {
     snprintf(failure, sizeof failure, "%s", text);
@@ -62,6 +69,13 @@ static int32_t pipe_handle;
 static uint64_t create_call, join_call;
 static int sender_offset; /* 12 in the real 32-bit DLL, 16 by the headers' packing: whichever works */
 static BYTE identity[IDENTITY_SIZE];
+/* A friend's first message can reach the host before Steam has told the host that friend is in the
+ * lobby. Refusing for good then left the friend sending into nothing, so the host keeps asking. */
+static uint64_t pending[PENDING_MAX];
+static DWORD pending_since[PENDING_MAX];
+static uint64_t asked[ASKED_MAX]; /* friends' lobbies whose data was requested */
+static int last_send_result = RESULT_OK;
+static bool got_message;
 
 static int(__cdecl *p_InitFlat)(char *);
 static int32_t(__cdecl *p_GetHSteamPipe)(void);
@@ -96,6 +110,9 @@ static bool(__cdecl *p_CloseSessionWithUser)(void *, const void *);
 static void(__cdecl *p_SetSteamID64)(void *, uint64_t);
 static uint64_t(__cdecl *p_GetSteamID64)(const void *);
 static void(__cdecl *p_MessageRelease)(void *);
+static int(__cdecl *p_GetFriendPersonaState)(void *, uint64_t);
+static bool(__cdecl *p_InviteUserToLobby)(void *, uint64_t, uint64_t);
+static bool(__cdecl *p_RequestLobbyData)(void *, uint64_t);
 
 static bool load_symbol(void **slot, const char *name) {
     *slot = (void *)GetProcAddress(api, name);
@@ -109,10 +126,16 @@ static bool load_api(void) {
     slash = strrchr(path, '\\');
     if (slash) slash[1] = 0;
     strncat(path, "steam_api.dll", sizeof path - strlen(path) - 1);
-    if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES) return false;
+    if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES) {
+        say("steam: no steam_api.dll next to the exe, so Steam is off. See the README to get it");
+        set_off("STEAM OFF: NO STEAM_API.DLL");
+        return false;
+    }
     api = LoadLibraryA(path);
     if (!api) {
-        say("steam: steam_api.dll is there but did not load (%lu)", GetLastError());
+        DWORD error = GetLastError();
+        say("steam: steam_api.dll is there but did not load (%lu)%s", error, error == ERROR_BAD_EXE_FORMAT ? ", it is the 64-bit one and the game needs Windows-x86/steam_api.dll" : "");
+        set_off(error == ERROR_BAD_EXE_FORMAT ? "STEAM OFF: USE 32-BIT STEAM_API.DLL" : "STEAM OFF: STEAM_API.DLL DIDN'T LOAD");
         return false;
     }
     bool ok = true;
@@ -151,12 +174,22 @@ static bool load_api(void) {
     SYM(p_GetSteamID64, "SteamAPI_SteamNetworkingIdentity_GetSteamID64");
     SYM(p_MessageRelease, "SteamAPI_SteamNetworkingMessage_t_Release");
 #undef SYM
+    /* Newer additions: without them only invites and finding friends who launched from Steam stop. */
+    load_symbol((void **)&p_GetFriendPersonaState, "SteamAPI_ISteamFriends_GetFriendPersonaState");
+    load_symbol((void **)&p_InviteUserToLobby, "SteamAPI_ISteamMatchmaking_InviteUserToLobby");
+    load_symbol((void **)&p_RequestLobbyData, "SteamAPI_ISteamMatchmaking_RequestLobbyData");
+    if (!ok) set_off("STEAM OFF: WRONG STEAM_API.DLL");
     return ok;
 }
 
 static bool real_start(void) {
-    char error[1024] = "";
+    char error[1024] = "", launched[32] = "";
     if (!load_api()) return false;
+    /* Steam's Play button starts the game as FNAF 4 (388090) and loads its overlay. The mod still
+     * runs as Spacewar, so both players' copies talk under the same app. */
+    if (GetEnvironmentVariableA("SteamAppId", launched, sizeof launched) && strcmp(launched, APP_ID) != 0)
+        say("steam: started by Steam as app %s, the mod runs as app %s", launched, APP_ID);
+    say("steam: overlay renderer %s. FNAF 4 doesn't show the Steam overlay, so invite friends from the CO-OP panel", GetModuleHandleA("GameOverlayRenderer.dll") ? "loaded" : "not loaded");
     /* Steam reads the app id from the environment or from this file next to the exe. */
     SetEnvironmentVariableA("SteamAppId", APP_ID);
     SetEnvironmentVariableA("SteamGameId", APP_ID);
@@ -174,7 +207,8 @@ static bool real_start(void) {
     }
     int result = p_InitFlat(error);
     if (result != 0) {
-        say("steam: not started (%d%s%s). Is Steam for Windows running and signed in, in this Wine setup?", result, error[0] ? ": " : "", error);
+        say("steam: not started (%d%s%s). Is Steam for Windows running and signed in? On a Mac it must run in the same Wine setup", result, error[0] ? ": " : "", error);
+        set_off(result == 2 ? "STEAM OFF: STEAM ISN'T RUNNING" : result == 3 ? "STEAM OFF: UPDATE STEAM" : "STEAM OFF: STEAM DIDN'T START");
         return false;
     }
     p_ManualDispatch_Init();
@@ -185,6 +219,7 @@ static bool real_start(void) {
     messages = p_SteamNetworkingMessages();
     if (!user || !matchmaking || !friends || !messages) {
         say("steam: an interface was missing (user %p, matchmaking %p, friends %p, messages %p)", user, matchmaking, friends, messages);
+        set_off("STEAM OFF: WRONG STEAM_API.DLL");
         return false;
     }
     me = p_GetSteamID(user);
@@ -237,7 +272,8 @@ static void lobby_entered(uint64_t id, uint32_t response) {
     if (phase != PHASE_JOINING) return;
     if (response != 1) {
         phase = PHASE_NONE;
-        set_failure("Couldn't join that Steam room. It may have closed");
+        say("steam: Steam answered %u to entering lobby %llu", response, (unsigned long long)id);
+        set_failure(response == 2 ? "That Steam room is gone" : response == 4 ? "That Steam room is full" : response == 3 ? "That Steam room is for friends of the host only" : response == 7 ? "Steam won't let a limited account join rooms" : "Couldn't join that Steam room. It may have closed");
         return;
     }
     const char *mark = p_GetLobbyData(matchmaking, id, LOBBY_KEY);
@@ -254,21 +290,74 @@ static void lobby_entered(uint64_t id, uint32_t response) {
     say("steam: joined lobby %llu, hosted by %llu", (unsigned long long)lobby, (unsigned long long)owner);
 }
 
-static void handle_callback(int32_t id, const uint8_t *param) {
+static void pending_add(uint64_t id) {
+    int slot = -1;
+    for (int i = 0; i < PENDING_MAX; i++) {
+        if (pending[i] == id) slot = i;
+        else if (!pending[i] && slot < 0) slot = i;
+    }
+    if (slot < 0) slot = 0;
+    pending[slot] = id;
+    pending_since[slot] = GetTickCount();
+}
+
+/* Sessions from friends whose lobby entry hadn't reached this host yet. */
+static void pending_check(void) {
+    DWORD now = GetTickCount();
+    for (int i = 0; i < PENDING_MAX; i++) {
+        if (!pending[i]) continue;
+        if (lobby && owner == me && real_is_member(pending[i])) {
+            p_AcceptSessionWithUser(messages, identity_of(pending[i]));
+            say("steam: accepted a session from %llu once it was in the lobby", (unsigned long long)pending[i]);
+            pending[i] = 0;
+        } else if (now - pending_since[i] > PENDING_MS) {
+            say("steam: %llu never showed up in the lobby, its session stays closed", (unsigned long long)pending[i]);
+            pending[i] = 0;
+        }
+    }
+}
+
+static void handle_callback(int32_t id, const uint8_t *param, int size) {
     switch (id) {
     case CB_LOBBY_CREATED: lobby_created(*(const int32_t *)param, *(const uint64_t *)(param + 8)); break;
     case CB_LOBBY_ENTER: lobby_entered(*(const uint64_t *)param, *(const uint32_t *)(param + 16)); break;
-    case CB_LOBBY_JOIN_REQUESTED: join_request = *(const uint64_t *)param; break;
-    case CB_RICH_PRESENCE_JOIN_REQUESTED: join_request = lobby_from_text((const char *)param + 8); break;
+    case CB_LOBBY_JOIN_REQUESTED:
+        join_request = *(const uint64_t *)param;
+        say("steam: the player accepted an invite to lobby %llu", (unsigned long long)join_request);
+        break;
+    case CB_RICH_PRESENCE_JOIN_REQUESTED:
+        join_request = lobby_from_text((const char *)param + 8);
+        say("steam: the player clicked Join Game, lobby %llu", (unsigned long long)join_request);
+        break;
+    case CB_LOBBY_CHAT_UPDATE: {
+        uint64_t changed = *(const uint64_t *)(param + 8);
+        uint32_t state = *(const uint32_t *)(param + 24);
+        if (*(const uint64_t *)param == lobby) say("steam: %llu %s the lobby", (unsigned long long)changed, state & 1 ? "entered" : "left");
+        break;
+    }
     case CB_SESSION_REQUEST: {
         uint64_t from = p_GetSteamID64(param);
         /* The host lets in its lobby's members, a client only its host. */
-        bool welcome = lobby && (owner == me ? real_is_member(from) : from == owner);
+        bool host = lobby && owner == me;
+        bool welcome = lobby && (host ? real_is_member(from) : from == owner);
         if (welcome) p_AcceptSessionWithUser(messages, param);
-        say("steam: %s a session from %llu", welcome ? "accepted" : "refused", (unsigned long long)from);
+        else if (host) pending_add(from);
+        say("steam: %s a session from %llu", welcome ? "accepted" : host ? "holding, not in the lobby yet," : "refused", (unsigned long long)from);
         break;
     }
-    case CB_SESSION_FAILED: say("steam: a session failed"); break;
+    case CB_SESSION_FAILED: {
+        /* SteamNetConnectionInfo_t: end reason at 180 and its text at 184, by the SDK headers. */
+        char why[129] = "";
+        int reason = size >= 312 ? *(const int32_t *)(param + 180) : 0;
+        if (size >= 312) {
+            memcpy(why, param + 184, 128);
+            why[128] = 0;
+            for (char *c = why; *c; c++)
+                if (*c < 32 || *c > 126) *c = '?';
+        }
+        say("steam: the session with %llu failed (%d %s)", (unsigned long long)p_GetSteamID64(param), reason, why);
+        break;
+    }
     default: break;
     }
 }
@@ -276,6 +365,7 @@ static void handle_callback(int32_t id, const uint8_t *param) {
 static void real_tick(void) {
     CallbackMsg msg;
     p_ManualDispatch_RunFrame(pipe_handle);
+    pending_check();
     while (p_ManualDispatch_GetNextCallback(pipe_handle, &msg)) {
         if (msg.callback == CB_CALL_COMPLETED) {
             uint64_t call = *(const uint64_t *)msg.param;
@@ -284,11 +374,11 @@ static void real_tick(void) {
             void *result = size ? calloc(1, size) : NULL;
             bool failed = true;
             if (result && p_ManualDispatch_GetAPICallResult(pipe_handle, call, result, (int)size, expected, &failed) && !failed) {
-                if (call == create_call || call == join_call) handle_callback(expected, result);
+                if (call == create_call || call == join_call) handle_callback(expected, result, (int)size);
             }
             free(result);
         } else {
-            handle_callback(msg.callback, msg.param);
+            handle_callback(msg.callback, msg.param, msg.size);
         }
         p_ManualDispatch_FreeLastCallback(pipe_handle);
     }
@@ -305,6 +395,8 @@ static int real_receive(uint64_t *from, void *buffer, int capacity) {
         say("steam: message sender found at offset %d", sender_offset);
     }
     *from = p_GetSteamID64(m + sender_offset);
+    if (!got_message) say("steam: first message, from %llu", (unsigned long long)*from);
+    got_message = true;
     if (size > capacity) size = -2;
     else memcpy(buffer, data, (size_t)size);
     p_MessageRelease(message);
@@ -319,7 +411,20 @@ static int real_friend_rooms(SteamRoom *out, int max) {
         memset(info, 0, sizeof info);
         if (!p_GetFriendGamePlayed(friends, friend_id, info)) continue;
         uint64_t game = *(const uint64_t *)info, room = *(const uint64_t *)(info + 16);
-        if ((game & 0xFFFFFF) != 480 || !room) continue;
+        if (!room) continue;
+        /* A friend who started the game with Steam's Play button can show as FNAF 4 rather than
+         * Spacewar, so the lobby's own mark decides. Steam fetches it for lobbies we're not in. */
+        const char *mark = p_GetLobbyData(matchmaking, room, LOBBY_KEY);
+        if (!mark || !mark[0]) {
+            bool seen = false;
+            for (int k = 0; k < ASKED_MAX; k++) seen = seen || asked[k] == room;
+            if (!seen) {
+                memmove(asked + 1, asked, sizeof asked - sizeof asked[0]);
+                asked[0] = room;
+                if (p_RequestLobbyData) p_RequestLobbyData(matchmaking, room);
+            }
+            if ((game & 0xFFFFFF) != 480) continue;
+        }
         out[found].lobby = room;
         out[found].owner = friend_id;
         snprintf(out[found].name, STEAM_NAME_LEN, "%s", p_GetFriendPersonaName(friends, friend_id));
@@ -454,10 +559,42 @@ static int mock_friend_rooms(SteamRoom *out, int max) {
     return count;
 }
 
+/* An invite is a file named for the friend, holding the lobby. The friend's stand-in accepts it. */
+static void mock_invite_path(uint64_t to, char *out, size_t cap) { snprintf(out, cap, "%s\\invite-%llu.ini", opts.mock_dir, (unsigned long long)to); }
+
+static bool mock_invite(uint64_t to) {
+    char path[MOCK_PATH], text[32];
+    mock_invite_path(to, path, sizeof path);
+    snprintf(text, sizeof text, "%llu", (unsigned long long)lobby);
+    return WritePrivateProfileStringA("invite", "lobby", text, path) != 0;
+}
+
+static int mock_online_friends(SteamFriend *out, int max) {
+    int count = 0;
+    for (int slot = 1; slot <= 4 && count < max; slot++) {
+        uint64_t id = MOCK_BASE + (uint64_t)slot;
+        if (id == me) continue;
+        out[count].id = id;
+        snprintf(out[count].name, STEAM_NAME_LEN, "Stand-in %d", slot);
+        count++;
+    }
+    return count;
+}
+
 static void mock_tick(uint32_t now) {
-    if (!opts.mock_join || join_request || lobby || now - mock_last_join_check < 1000) return;
-    SteamRoom room;
+    char path[MOCK_PATH], text[32];
+    if (join_request || lobby || now - mock_last_join_check < 1000) return;
     mock_last_join_check = now;
+    mock_invite_path(me, path, sizeof path);
+    GetPrivateProfileStringA("invite", "lobby", "", text, sizeof text, path);
+    if (text[0]) {
+        DeleteFileA(path);
+        join_request = _strtoui64(text, NULL, 10);
+        say("steam: the player accepted an invite to lobby %llu", (unsigned long long)join_request);
+        return;
+    }
+    if (!opts.mock_join) return;
+    SteamRoom room;
     if (mock_friend_rooms(&room, 1) == 1) {
         join_request = room.lobby;
         opts.mock_join = false;
@@ -511,6 +648,7 @@ bool steam_start(const SteamOptions *options, SteamLog log) {
 }
 
 bool steam_ready(void) { return ready; }
+const char *steam_off_reason(void) { return ready ? "STEAM ON" : off_reason; }
 uint64_t steam_me(void) { return me; }
 uint64_t steam_lobby(void) { return phase == PHASE_IN ? lobby : 0; }
 uint64_t steam_lobby_owner(void) { return phase == PHASE_IN ? owner : 0; }
@@ -561,6 +699,7 @@ void steam_leave(void) {
     }
     say("steam: left lobby %llu", (unsigned long long)lobby);
     memset(mock_known, 0, sizeof mock_known);
+    memset(pending, 0, sizeof pending);
     lobby = owner = 0;
     phase = PHASE_NONE;
 }
@@ -573,7 +712,41 @@ int steam_friend_rooms(SteamRoom *out, int max) {
 bool steam_send(uint64_t to, const void *data, int size) {
     if (!ready || !to) return false;
     if (mock) return mock_send(to, data, size);
-    return p_SendMessageToUser(messages, identity_of(to), data, (uint32_t)size, SEND_UNRELIABLE_NO_NAGLE, 0) == RESULT_OK;
+    int result = p_SendMessageToUser(messages, identity_of(to), data, (uint32_t)size, SEND_FLAGS, 0);
+    if (result != last_send_result) say("steam: sending to %llu now gives result %d (1 is OK)", (unsigned long long)to, result);
+    last_send_result = result;
+    return result == RESULT_OK;
+}
+
+static int real_online_friends(SteamFriend *out, int max) {
+    uint8_t info[32];
+    if (!p_GetFriendPersonaState || !p_InviteUserToLobby) return 0;
+    int count = p_GetFriendCount(friends, FRIEND_FLAG_IMMEDIATE), found = 0;
+    /* Two passes: friends in a game first, then everyone else online. */
+    for (int pass = 0; pass < 2; pass++)
+        for (int i = 0; i < count && found < max; i++) {
+            uint64_t friend_id = p_GetFriendByIndex(friends, i, FRIEND_FLAG_IMMEDIATE);
+            if (p_GetFriendPersonaState(friends, friend_id) == 0) continue; /* offline */
+            memset(info, 0, sizeof info);
+            bool playing = p_GetFriendGamePlayed(friends, friend_id, info);
+            if (playing != (pass == 0)) continue;
+            out[found].id = friend_id;
+            snprintf(out[found].name, STEAM_NAME_LEN, "%s", p_GetFriendPersonaName(friends, friend_id));
+            found++;
+        }
+    return found;
+}
+
+int steam_online_friends(SteamFriend *out, int max) {
+    if (!ready) return 0;
+    return mock ? mock_online_friends(out, max) : real_online_friends(out, max);
+}
+
+bool steam_invite(uint64_t friend_id) {
+    if (!ready || phase != PHASE_IN || owner != me || !friend_id) return false;
+    bool ok = mock ? mock_invite(friend_id) : p_InviteUserToLobby && p_InviteUserToLobby(matchmaking, lobby, friend_id);
+    say("steam: invite to %llu %s", (unsigned long long)friend_id, ok ? "sent" : "failed");
+    return ok;
 }
 
 int steam_receive(uint64_t *from, void *buffer, int capacity) {

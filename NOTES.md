@@ -2,7 +2,7 @@
 
 Phase reached: 6 (shared nights played by the owner and a friend on two Macs, and on Windows per the
 owner), no claim issue (owner declined), QA level `none`.
-Last updated 2026-11-03.
+Last updated 2026-11-04.
 
 ## Identity
 
@@ -292,7 +292,34 @@ Last updated 2026-11-03.
   launch with 35 in the ini started at 35. The sound itself was not listened to or measured, only the volume
   MMFS2 stored. Not run: Foxy's closet scare, Plushtrap, BB, the Extras gallery, cutscene scares, Halloween.
 
+- Owner report, 2026-11-04, Windows, v0.5.3: the Steam overlay doesn't open, and friends can't join over
+  Steam. No logs yet, so which step fails is unknown.
+- A 2016 Steam discussion for FNAF 4 reports the overlay doesn't work in the unmodded game.
+  https://steamcommunity.com/app/388090/discussions/0/154642321534516217
+- mmfs2.dll from the pack imports DDRAW.dll and names mmf2d3d8.dll and mmf2d3d9.dll, and neither of those is
+  in the pack. Valve lists the overlay's supported APIs as DirectX 7 to 12, OpenGL, Metal and Vulkan, and says
+  it doesn't work in software-rendered games. https://partner.steamgames.com/doc/features/overlay
+- The three exports 0.5.4 adds (GetFriendPersonaState, InviteUserToLobby, RequestLobbyData) are in Steamworks
+  1.57's steam_api64.dll (read from another game's copy) and in the pinned 32-bit steam_api.dll
+  (Steamworks.NET Standalone 2025.164.1, zip digest 9412348c…537d matches GitHub's, DLL SHA-256 fdafb7c6…5da
+  as pinned), checked 2026-11-04. From 0.5.4 the release zip carries that DLL.
+- 0.5.4 (built, unit tests only, not run in the game): the host's panel has INVITE STEAM FRIENDS, a list of
+  online friends that sends InviteUserToLobby, and the lobby id. The panel's top line says STEAM ON or why it is
+  off. Friends' rooms no longer need the friend to show as app 480; a lobby carrying the `fnaf4coop` key counts
+  (RequestLobbyData for the rest). A session from someone not yet in the host's lobby is held for 15 s and
+  accepted once they appear, instead of refused for good; sends carry AutoRestartBrokenSession. More Steam log
+  lines: launch app id, overlay renderer loaded, lobby members entering and leaving, LobbyEnter's answer, the
+  first message, send results, session failures. Menu tests 12628 checks, 0 failures; disabling the invite
+  button made 8 of them fail.
+
 ## Derived
+
+- FNAF 4 most likely draws through DirectDraw (Fusion's Standard mode), which is why the overlay never opens. From
+  the pack's module list and Valve's list above, not checked on Windows.
+- Possible reasons friends couldn't join, none confirmed without logs: no or 64-bit `steam_api.dll` (the panel
+  only showed `+ STEAM` when it worked, and said nothing otherwise); the host refusing a session that arrived
+  before the friend's lobby entry (the stand-in rechecks every message, so it couldn't show this); a friend who
+  started from Steam's Play button showing as FNAF 4, which the room list filtered out.
 
 - The solver's work targets Android builds, so per ground rule 5 nothing from it applies to
   the Steam build until checked against the hash above.
@@ -309,6 +336,7 @@ Last updated 2026-11-03.
 
 ## Unknown
 
+- Whether the overlay appears in FNAF 4 with a DirectDraw wrapper (dgVoodoo2, cnc-ddraw). Not tried.
 - Real Steam: whether Windows Steam runs signed in under GPTK beside the game, whether `steam_api.dll`
   loads there, the callback and message offsets (from the playbook, measured on Windows), lobby
   creation, sessions, Join Game and invites between two accounts. Nothing has run against real Steam.

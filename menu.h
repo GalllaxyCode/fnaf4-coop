@@ -8,9 +8,10 @@
 
 #define MENU_PLAYERS_LEN 60
 #define MENU_STATUS_LEN 60
+#define MENU_MAX_FRIENDS 7
 
 typedef enum { ROOM_NONE, ROOM_HOSTING, ROOM_JOINING, ROOM_JOINED } RoomState;
-typedef enum { ACTION_NONE, ACTION_HOST, ACTION_JOIN_ROOM, ACTION_JOIN_ADDRESS, ACTION_LEAVE, ACTION_NAME_CHANGED, ACTION_GITHUB, ACTION_SETTINGS_CHANGED } MenuAction;
+typedef enum { ACTION_NONE, ACTION_HOST, ACTION_JOIN_ROOM, ACTION_JOIN_ADDRESS, ACTION_LEAVE, ACTION_NAME_CHANGED, ACTION_GITHUB, ACTION_SETTINGS_CHANGED, ACTION_INVITE_OPENED, ACTION_INVITE } MenuAction;
 typedef enum { FOCUS_NONE, FOCUS_NAME, FOCUS_ADDRESS } MenuFocus;
 
 typedef struct {
@@ -32,6 +33,13 @@ typedef struct {
     int side;
     bool steam; /* Steam is running, so rooms of Steam friends show too */
     bool steam_open; /* this host's room is also open on Steam */
+    char steam_note[MENU_STATUS_LEN]; /* STEAM ON, or why it's off */
+    char lobby_id[24]; /* the host's Steam lobby, for friends to type */
+    bool invite_open; /* the host's page of Steam friends to invite */
+    int friend_count;
+    char friends[MENU_MAX_FRIENDS][SYNC_NAME_LEN];
+    bool invited[MENU_MAX_FRIENDS];
+    int invite_index; /* set with ACTION_INVITE */
     bool settings_open; /* the settings page is showing instead of the rooms */
     bool dragging; /* the jumpscare volume slider is held */
     int jumpscare_volume; /* 0 to 100, this player's own */
@@ -47,7 +55,7 @@ bool menu_click(Menu *m, const Lobby *lobby, int x, int y, MenuAction *action);
 void menu_char(Menu *m, int c, MenuAction *action);
 void menu_escape(Menu *m, MenuAction *action);
 void menu_set_status(Menu *m, const char *text);
-#define MOD_VERSION "0.5.3"
+#define MOD_VERSION "0.5.4"
 
 /* Mode names and side names, also used by the in-game display. */
 const char *menu_mode_name(int mode);

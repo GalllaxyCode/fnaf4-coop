@@ -324,7 +324,85 @@ static void test_the_panel_shows_the_version(void) {
     CHECK(shown, "no version on the panel");
 }
 
+static bool has_text(const OverlayScene *s, const char *want) {
+    for (int i = 0; i < s->text_count; i++)
+        if (strstr(s->texts[i].text, want)) return true;
+    return false;
+}
+
+/* The Steam overlay doesn't open in FNAF 4, so the host invites from the panel. */
+static void test_invite_page(void) {
+    Menu m;
+    Lobby l;
+    MenuAction act;
+    OverlayScene s;
+    lobby_clear(&l);
+    menu_init(&m, "Host");
+    m.open = true;
+    m.room = ROOM_HOSTING;
+    memset(&s, 0, sizeof s);
+    menu_draw(&m, &l, 0, &s);
+    CHECK(!has_text(&s, "INVITE STEAM FRIENDS"), "invite button without a Steam room");
+    menu_click(&m, &l, 500, 530, &act);
+    CHECK(act == ACTION_NONE && !m.invite_open, "invite page opened without a Steam room");
+
+    m.steam = m.steam_open = true;
+    strcpy(m.lobby_id, "109775241234567890");
+    memset(&s, 0, sizeof s);
+    menu_draw(&m, &l, 0, &s);
+    CHECK(has_text(&s, "INVITE STEAM FRIENDS"), "no invite button on a Steam room");
+    menu_click(&m, &l, 500, 530, &act);
+    CHECK(act == ACTION_INVITE_OPENED && m.invite_open, "invite button gave %d", act);
+
+    memset(&s, 0, sizeof s);
+    menu_draw(&m, &l, 0, &s);
+    CHECK(has_text(&s, "No Steam friends online"), "empty list not explained");
+    CHECK(has_text(&s, "109775241234567890"), "lobby id not shown");
+    CHECK(has_text(&s, "BACK"), "no way back");
+
+    m.friend_count = 2;
+    strcpy(m.friends[0], "Alice");
+    strcpy(m.friends[1], "Bob");
+    menu_click(&m, &l, 500, 206 + 50 + 20, &act);
+    CHECK(act == ACTION_INVITE && m.invite_index == 1, "second friend gave %d/%d", act, m.invite_index);
+    m.invited[1] = true;
+    menu_click(&m, &l, 500, 206 + 50 + 20, &act);
+    CHECK(act == ACTION_NONE, "a friend was invited twice");
+    menu_click(&m, &l, 500, 206 + 3 * 50 + 20, &act);
+    CHECK(act == ACTION_NONE && m.invite_open, "an empty row did something");
+    memset(&s, 0, sizeof s);
+    menu_draw(&m, &l, 0, &s);
+    CHECK(has_text(&s, "Alice - INVITE") && has_text(&s, "Bob - INVITED"), "rows not labelled");
+    CHECK(s.rect_count <= OVERLAY_MAX_RECTS && s.text_count <= OVERLAY_MAX_TEXTS, "draw counts %d %d", s.rect_count, s.text_count);
+
+    menu_click(&m, &l, 560, 618, &act); /* BACK, where SETTINGS sits */
+    CHECK(!m.invite_open && !m.settings_open, "back went to %d %d", m.invite_open, m.settings_open);
+    menu_click(&m, &l, 500, 530, &act);
+    menu_escape(&m, &act);
+    CHECK(!m.invite_open && m.open, "escape should leave the invite page first");
+
+    menu_click(&m, &l, 500, 530, &act);
+    m.room = ROOM_JOINED;
+    menu_click(&m, &l, 500, 300, &act);
+    CHECK(!m.invite_open, "a client kept the host's invite page");
+}
+
+static void test_steam_note_shows(void) {
+    Menu m;
+    Lobby l;
+    OverlayScene s;
+    lobby_clear(&l);
+    menu_init(&m, "A");
+    m.open = true;
+    strcpy(m.steam_note, "STEAM OFF: NO STEAM_API.DLL");
+    memset(&s, 0, sizeof s);
+    menu_draw(&m, &l, 0, &s);
+    CHECK(has_text(&s, "NO STEAM_API.DLL"), "the reason Steam is off isn't shown");
+}
+
 int main(void) {
+    test_invite_page();
+    test_steam_note_shows();
     test_sweep_starts_near_and_covers_the_network();
     test_the_panel_shows_the_version();
     test_steam_rooms_sit_beside_wifi_rooms();

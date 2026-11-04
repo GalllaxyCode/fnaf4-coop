@@ -34,6 +34,7 @@ static const Box volume_slider = {FIELD_X0, 248, FIELD_X1 - 96, 296};
 #define SLIDER_X0 (FIELD_X0 + 8)
 #define SLIDER_X1 (FIELD_X1 - 104)
 #define KNOB_HALF 8
+static const Box invite_button = {FIELD_X0, 512, FIELD_X1, 552};
 static const Box mode_prev = {FIELD_X0, 214, FIELD_X0 + 44, 254};
 static const Box mode_next = {FIELD_X1 - 44, 214, FIELD_X1, 254};
 static const Box standing_toggle = {FIELD_X0, 322, FIELD_X1, 362};
@@ -57,6 +58,11 @@ static bool inside(const Box *b, int x, int y) { return x >= b->x0 && x < b->x1 
 
 static Box room_row(int index) {
     Box b = {FIELD_X0, 318 + index * (ROW_H + 6), FIELD_X1, 318 + index * (ROW_H + 6) + ROW_H};
+    return b;
+}
+
+static Box friend_row(int index) {
+    Box b = {FIELD_X0, 206 + index * (ROW_H + 6), FIELD_X1, 206 + index * (ROW_H + 6) + ROW_H};
     return b;
 }
 
@@ -200,8 +206,25 @@ static void draw_room(const Menu *m, OverlayScene *s) {
         draw_settings(m, s);
         text(s, mid, 462, 1, ALIGN_CENTER, COLOR_DIM, m->room == ROOM_HOSTING ? "Close this and pick New Game or Continue." : "Waiting for the host to start.");
         text(s, mid, 488, 1, ALIGN_CENTER, COLOR_DIM, "Everyone follows the host in.");
+        if (m->room == ROOM_HOSTING && m->steam_open) button(s, m, &invite_button, "INVITE STEAM FRIENDS");
     }
     button(s, m, &leave_button, m->room == ROOM_HOSTING ? "CLOSE ROOM" : "LEAVE ROOM");
+}
+
+static void draw_invites(const Menu *m, OverlayScene *s) {
+    int mid = (PANEL_X0 + PANEL_X1) / 2;
+    char line[OVERLAY_TEXT_LEN];
+    text(s, mid, 146, 1, ALIGN_CENTER, COLOR_TEXT, "INVITE STEAM FRIENDS");
+    snprintf(line, sizeof line, "LOBBY ID %s", m->lobby_id);
+    text(s, mid, 178, 1, ALIGN_CENTER, COLOR_DIM, line);
+    if (m->friend_count == 0) text(s, mid, 300, 1, ALIGN_CENTER, COLOR_DIM, "No Steam friends online.");
+    for (int i = 0; i < m->friend_count && i < MENU_MAX_FRIENDS; i++) {
+        Box row = friend_row(i);
+        rect(s, &row, inside(&row, m->hover_x, m->hover_y) ? COLOR_HOT : COLOR_ROW, 255, 6);
+        snprintf(line, sizeof line, "%s - %s", m->friends[i], m->invited[i] ? "INVITED" : "INVITE");
+        text(s, row.x0 + 12, row.y0 + 13, 1, ALIGN_LEFT, m->invited[i] ? COLOR_DIM : COLOR_TEXT, line);
+    }
+    text(s, mid, 566, 1, ALIGN_CENTER, COLOR_DIM, "Friends start the game first, then accept in Steam.");
 }
 
 void menu_draw(const Menu *m, const Lobby *lobby, uint32_t now_ms, OverlayScene *s) {
@@ -221,8 +244,10 @@ void menu_draw(const Menu *m, const Lobby *lobby, uint32_t now_ms, OverlayScene 
     text(s, PANEL_X0 + 148, PANEL_Y0 + 24, 1, ALIGN_LEFT, COLOR_DIM, "V" MOD_VERSION);
     button(s, m, &close_button, "X");
     button(s, m, &github_button, "GITHUB");
-    button(s, m, &settings_button, m->settings_open ? "BACK" : "SETTINGS");
+    if (m->steam_note[0]) text(s, PANEL_X0 + 200, PANEL_Y0 + 24, 1, ALIGN_LEFT, m->steam ? COLOR_DIM : 0xFFB060, m->steam_note);
+    button(s, m, &settings_button, m->settings_open || m->invite_open ? "BACK" : "SETTINGS");
     if (m->settings_open) draw_settings_page(m, s);
+    else if (m->invite_open && m->room == ROOM_HOSTING) draw_invites(m, s);
     else if (m->room == ROOM_NONE) draw_lobby(m, lobby, now_ms, s);
     else draw_room(m, s);
     if (m->status[0]) text(s, (PANEL_X0 + PANEL_X1) / 2, PANEL_Y1 - 16, 1, ALIGN_CENTER, 0xFFB060, m->status);
@@ -259,6 +284,7 @@ bool menu_click(Menu *m, const Lobby *lobby, int x, int y, MenuAction *action) {
         if (!inside(&coop_button, x, y)) return false;
         m->open = true;
         m->settings_open = false;
+        m->invite_open = false;
         m->dragging = false;
         m->status[0] = 0;
         return true;
@@ -273,7 +299,19 @@ bool menu_click(Menu *m, const Lobby *lobby, int x, int y, MenuAction *action) {
         return true;
     }
     if (inside(&settings_button, x, y)) {
-        m->settings_open = !m->settings_open;
+        if (m->invite_open) m->invite_open = false;
+        else m->settings_open = !m->settings_open;
+        return true;
+    }
+    if (m->invite_open && m->room != ROOM_HOSTING) m->invite_open = false;
+    if (m->invite_open) {
+        for (int i = 0; i < m->friend_count && i < MENU_MAX_FRIENDS; i++) {
+            Box row = friend_row(i);
+            if (inside(&row, x, y) && !m->invited[i]) {
+                m->invite_index = i;
+                *action = ACTION_INVITE;
+            }
+        }
         return true;
     }
     if (m->settings_open) {
@@ -286,6 +324,13 @@ bool menu_click(Menu *m, const Lobby *lobby, int x, int y, MenuAction *action) {
     if (m->room != ROOM_NONE) {
         int sides = menu_side_count(m->mode);
         if (inside(&leave_button, x, y)) *action = ACTION_LEAVE;
+        if (m->room == ROOM_HOSTING && m->steam_open && inside(&invite_button, x, y)) {
+            m->invite_open = true;
+            m->friend_count = 0;
+            memset(m->invited, 0, sizeof m->invited);
+            *action = ACTION_INVITE_OPENED;
+            return true;
+        }
         if (m->room == ROOM_HOSTING) {
             if (inside(&mode_prev, x, y)) m->mode = (m->mode + MODE_COUNT - 1) % MODE_COUNT;
             if (inside(&mode_next, x, y)) m->mode = (m->mode + 1) % MODE_COUNT;
@@ -337,6 +382,7 @@ void menu_char(Menu *m, int c, MenuAction *action) {
 void menu_escape(Menu *m, MenuAction *action) {
     *action = ACTION_NONE;
     if (m->focus != FOCUS_NONE) leave_field(m, action);
+    else if (m->invite_open) m->invite_open = false;
     else if (m->settings_open) m->settings_open = false;
     else m->open = false;
     if (m->dragging && !m->settings_open) {
