@@ -5,8 +5,8 @@ Shared-night co-op for the Steam version of Five Nights at Freddy's 4, on macOS 
 | | |
 |---|---|
 | Game | Steam app 388090, manifest 3840504613812117733, Fusion build 288 |
-| Tested on | macOS, Windows, GPTK 4.0 beta 3 on Wine 11 |
-| Not tested | Steam online between two real accounts, Linux |
+| Tested on | macOS, Windows, GPTK 4.0 beta 3 on Wine 11, Steam online with friends |
+| Not tested | Linux |
 
 This is an early build so expect bugs. Bug reports with `fnaf4coop.log` from each player are very welcome.
 
@@ -82,7 +82,7 @@ Problems are logged to `fnaf4coop.log` next to the exe.
 
 ## Playing with friends on other networks (Steam)
 
-Friends on different networks can play through Steam, with no addresses and no router setup. Traffic goes through Valve's free relay network. **Real Steam between two accounts hasn't been tested from here yet**, only a stand-in that imitates Steam. If it fails for you, send `fnaf4coop.log` from both players.
+Friends on different networks can play through Steam, with no addresses and no router setup. Traffic goes through Valve's free relay network. It has been played with friends over Steam. If it fails for you, send `fnaf4coop.log` from both players.
 
 What every player needs:
 

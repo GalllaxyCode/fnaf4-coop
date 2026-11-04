@@ -333,6 +333,9 @@ Last updated 2026-11-04.
 - The panel's text is about 9 view pixels a glyph on screen, not 6. The 0.5.4 Steam status ran into the version;
   moved and shortened, checked in a shot.
 
+- Owner report, 2026-11-04: Steam play checked with friends. Which version, OS and join path (room list,
+  invite, Join Game) is unknown, and no logs were shared. No two-account run was made from here.
+
 ## Derived
 
 - FNAF 4 most likely draws through DirectDraw (Fusion's Standard mode), which is why the overlay never opens. From
@@ -358,7 +361,7 @@ Last updated 2026-11-04.
 ## Unknown
 
 - Whether the overlay appears in FNAF 4 with a DirectDraw wrapper (dgVoodoo2, cnc-ddraw). Not tried.
-- Real Steam: whether Windows Steam runs signed in under GPTK beside the game, whether `steam_api.dll`
+- Real Steam, beyond the owner's report above: whether Windows Steam runs signed in under GPTK beside the game, whether `steam_api.dll`
   loads there, the callback and message offsets (from the playbook, measured on Windows), lobby
   creation, sessions, Join Game and invites between two accounts. Nothing has run against real Steam.
 - Which probe found the friend's room across machines: the one to `last_room`, or the sweep. A room on
