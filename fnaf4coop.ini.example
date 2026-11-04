@@ -7,3 +7,5 @@ host=
 port=47114
 ; 0 to 100, set with SETTINGS in the panel. 0 silences every jumpscare.
 jumpscare_volume=100
+; 0 shows only the game over screen when you die at night.
+jumpscares=1

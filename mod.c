@@ -21,6 +21,7 @@
 #include "scarevol.h"
 #include "sound.h"
 #include "steam.h"
+#include "noscare.h"
 #include "sync.h"
 
 #define EXE_TIMESTAMP 0x58CFD2A9u
@@ -361,7 +362,8 @@ static void run_action(MenuAction action) {
         char value[8];
         snprintf(value, sizeof value, "%d", menu.jumpscare_volume);
         WritePrivateProfileStringA("coop", "jumpscare_volume", value, cfg_ini);
-        logline("jumpscare volume set to %d", menu.jumpscare_volume);
+        WritePrivateProfileStringA("coop", "jumpscares", menu.jumpscares_off ? "0" : "1", cfg_ini);
+        logline("jumpscare volume set to %d, jumpscares %s", menu.jumpscare_volume, menu.jumpscares_off ? "off" : "on");
         break;
     }
     default: break;
@@ -733,6 +735,7 @@ static void script_run(uint32_t elapsed, bool on_title) {
         else if (strcmp(s->command, "hour") == 0) cnt_set(L"hour", s->value);
         else if (strcmp(s->command, "kill") == 0) cfg_test_kill = s->value;
         else if (strcmp(s->command, "jsvol") == 0) menu.jumpscare_volume = scarevol_clamp(s->value);
+        else if (strcmp(s->command, "noscare") == 0) menu.jumpscares_off = s->value != 0;
         else if (strcmp(s->command, "strace") == 0) sound_trace(s->value != 0);
         else if (strcmp(s->command, "goto") == 0) game_goto(s->value);
         else if (strcmp(s->command, "next") == 0) game_next_frame();
@@ -886,8 +889,11 @@ static void coop_tick(uint32_t now) {
     Output o;
     Packet out;
 
-    sound_tick(menu.jumpscare_volume);
-    if (!game_begin()) return;
+    bool begun = game_begin();
+    /* With jumpscares off their screams are silent in the night, and at game over where one runs on. */
+    sound_tick(menu.jumpscares_off && noscare_mutes(game_frame()) ? 0 : menu.jumpscare_volume);
+    if (!begun) return;
+    noscare_tick(menu.jumpscares_off, logline);
     memset(&l, 0, sizeof l);
     memset(&o, 0, sizeof o);
     l.frame = game_frame();
@@ -1184,6 +1190,7 @@ static void load_config(void) {
     if (!exe_is_supported()) { logline("this exe is not the supported Steam build, co-op is off"); return; }
     menu_init(&menu, name);
     menu.jumpscare_volume = scarevol_clamp((int)GetPrivateProfileIntA("coop", "jumpscare_volume", SCAREVOL_MAX, cfg_ini));
+    menu.jumpscares_off = GetPrivateProfileIntA("coop", "jumpscares", 1, cfg_ini) == 0;
     sound_init(exe_base, menu.jumpscare_volume, logline);
     lobby_clear(&lobby);
     if (cfg_test_mode) script_parse(bot);

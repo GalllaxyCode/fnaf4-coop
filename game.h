@@ -31,6 +31,16 @@ bool at_zone(BYTE *o, const wchar_t *zone);
 /* An active object's animation, direction (0-31) and frame, and whether it is hidden. */
 bool anim_read(BYTE *o, int *anim, int *dir, int *frame, bool *hidden);
 
+/* An object's "preferences II" flags, shared by every instance and read when one is created, found by
+ * its name in the current frame. NULL if it isn't there. */
+WORD *game_oc_flags2(const wchar_t *name);
+#define OCFLAGS2_VISIBLEATSTART 0x0008
+/* The number of an object action in a group (Show 27, Hide 26...), found by the object it acts on and
+ * its current number. NULL if the group has no such action. */
+short *act_number(BYTE *group, const wchar_t *object, short number);
+/* A system action's type and number, to check a group is the one expected. */
+bool act_is(BYTE *act, short type, short number);
+
 /* Event rules, addressed by their number in the frame's sheet. */
 /* The runtime numbers sounds per frame. These find the sample parameter that plays a number in the
  * current frame's events, and read its name back, checking it still holds that number. They read the

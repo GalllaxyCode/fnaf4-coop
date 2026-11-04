@@ -56,6 +56,8 @@ A **CO-OP** button appears on the title screen when the mod is running.
 
 **SETTINGS** in the CO-OP panel has a **Jumpscare volume** slider from 0 to 100. It turns down every jumpscare's sound: Bonnie, Chica, Freddy, Foxy, Fredbear, Nightmare, the cupcake, Plushtrap, BB, the Extras gallery and the cutscene scares. At 0 they make no sound at all. It only changes your own game, works in solo nights too, and is saved in `fnaf4coop.ini`.
 
+**Jumpscares** can be switched off on the same page. A death in the night then shows no animatronic and plays no scream: the room stays on screen for the second the scare would take, then the bloody game over screen appears. It covers every night death, Nightmare included, and Foxy's closet scare. The Plushtrap and BB minigames, the Extras gallery and the cutscenes still have theirs. Like the volume, it only changes your own game and is saved in `fnaf4coop.ini`.
+
 On Windows, putting `winmm.dll` and `steam_api.dll` next to the exe should be enough.
 
 ## Building from source

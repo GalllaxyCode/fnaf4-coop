@@ -31,6 +31,7 @@ static const Box settings_button = {FIELD_X1 - 224, 596, FIELD_X1 - 112, 640};
 static const Box github_button = {FIELD_X1 - 100, 596, FIELD_X1, 640};
 /* The jumpscare volume slider: the whole box takes clicks, the track runs between its ends. */
 static const Box volume_slider = {FIELD_X0, 248, FIELD_X1 - 96, 296};
+static const Box jumpscares_toggle = {FIELD_X0, 316, FIELD_X1, 356};
 #define SLIDER_X0 (FIELD_X0 + 8)
 #define SLIDER_X1 (FIELD_X1 - 104)
 #define KNOB_HALF 8
@@ -190,6 +191,7 @@ static void draw_settings_page(const Menu *m, OverlayScene *s) {
     if (v == 0) snprintf(value, sizeof value, "OFF");
     else snprintf(value, sizeof value, "%d", v);
     text(s, (volume_slider.x1 + FIELD_X1) / 2, 263, 1, ALIGN_CENTER, COLOR_TEXT, value);
+    button(s, m, &jumpscares_toggle, m->jumpscares_off ? "JUMPSCARES: OFF" : "JUMPSCARES: ON");
 }
 
 static void draw_room(const Menu *m, OverlayScene *s) {
@@ -244,7 +246,8 @@ void menu_draw(const Menu *m, const Lobby *lobby, uint32_t now_ms, OverlayScene 
     text(s, PANEL_X0 + 148, PANEL_Y0 + 24, 1, ALIGN_LEFT, COLOR_DIM, "V" MOD_VERSION);
     button(s, m, &close_button, "X");
     button(s, m, &github_button, "GITHUB");
-    if (m->steam_note[0]) text(s, PANEL_X0 + 200, PANEL_Y0 + 24, 1, ALIGN_LEFT, m->steam ? COLOR_DIM : 0xFFB060, m->steam_note);
+    /* Glyphs are about 9 view pixels wide on screen: after the version, and short of the X button. */
+    if (m->steam_note[0]) text(s, PANEL_X0 + 214, PANEL_Y0 + 24, 1, ALIGN_LEFT, m->steam ? COLOR_DIM : 0xFFB060, m->steam_note);
     button(s, m, &settings_button, m->settings_open || m->invite_open ? "BACK" : "SETTINGS");
     if (m->settings_open) draw_settings_page(m, s);
     else if (m->invite_open && m->room == ROOM_HOSTING) draw_invites(m, s);
@@ -318,6 +321,9 @@ bool menu_click(Menu *m, const Lobby *lobby, int x, int y, MenuAction *action) {
         if (inside(&volume_slider, x, y)) {
             m->dragging = true;
             m->jumpscare_volume = slider_value(x);
+        } else if (inside(&jumpscares_toggle, x, y)) {
+            m->jumpscares_off = !m->jumpscares_off;
+            *action = ACTION_SETTINGS_CHANGED;
         }
         return true;
     }

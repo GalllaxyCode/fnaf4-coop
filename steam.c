@@ -135,7 +135,7 @@ static bool load_api(void) {
     if (!api) {
         DWORD error = GetLastError();
         say("steam: steam_api.dll is there but did not load (%lu)%s", error, error == ERROR_BAD_EXE_FORMAT ? ", it is the 64-bit one and the game needs Windows-x86/steam_api.dll" : "");
-        set_off(error == ERROR_BAD_EXE_FORMAT ? "STEAM OFF: USE 32-BIT STEAM_API.DLL" : "STEAM OFF: STEAM_API.DLL DIDN'T LOAD");
+        set_off(error == ERROR_BAD_EXE_FORMAT ? "STEAM OFF: USE 32-BIT DLL" : "STEAM OFF: DLL DIDN'T LOAD");
         return false;
     }
     bool ok = true;
@@ -178,7 +178,7 @@ static bool load_api(void) {
     load_symbol((void **)&p_GetFriendPersonaState, "SteamAPI_ISteamFriends_GetFriendPersonaState");
     load_symbol((void **)&p_InviteUserToLobby, "SteamAPI_ISteamMatchmaking_InviteUserToLobby");
     load_symbol((void **)&p_RequestLobbyData, "SteamAPI_ISteamMatchmaking_RequestLobbyData");
-    if (!ok) set_off("STEAM OFF: WRONG STEAM_API.DLL");
+    if (!ok) set_off("STEAM OFF: WRONG DLL");
     return ok;
 }
 
@@ -208,7 +208,7 @@ static bool real_start(void) {
     int result = p_InitFlat(error);
     if (result != 0) {
         say("steam: not started (%d%s%s). Is Steam for Windows running and signed in? On a Mac it must run in the same Wine setup", result, error[0] ? ": " : "", error);
-        set_off(result == 2 ? "STEAM OFF: STEAM ISN'T RUNNING" : result == 3 ? "STEAM OFF: UPDATE STEAM" : "STEAM OFF: STEAM DIDN'T START");
+        set_off(result == 2 ? "STEAM OFF: NOT RUNNING" : result == 3 ? "STEAM OFF: UPDATE STEAM" : "STEAM OFF: DIDN'T START");
         return false;
     }
     p_ManualDispatch_Init();
@@ -219,7 +219,7 @@ static bool real_start(void) {
     messages = p_SteamNetworkingMessages();
     if (!user || !matchmaking || !friends || !messages) {
         say("steam: an interface was missing (user %p, matchmaking %p, friends %p, messages %p)", user, matchmaking, friends, messages);
-        set_off("STEAM OFF: WRONG STEAM_API.DLL");
+        set_off("STEAM OFF: WRONG DLL");
         return false;
     }
     me = p_GetSteamID(user);

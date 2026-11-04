@@ -7,6 +7,15 @@
 #define RVA_APP 0xB39CCu
 #define RVA_RUNHEADER 0xB39D4u
 #define APP_FRAME 0x1F0
+#define APP_OI_COUNT 0x194 /* the app's object table, read where the runtime creates objects (0x4469e0) */
+#define APP_OI_INDEX 0x198
+#define APP_OI_TABLE 0x19C
+#define OI_TYPE 2
+#define OI_COMMON 0x14
+#define OC_FLAGS2 0x2A /* tested against 8, visible at start, at 0x42b9b9 and 0x446a3a */
+#define OBJ_ACTIVE 2
+#define EVENT_TYPE 2
+#define EVENT_NUM 4
 #define RH_FRAME 28
 #define RH_QUIT 48
 #define RH_QUIT_PARAM 0x38
@@ -100,6 +109,20 @@ static BYTE *find_oil(const wchar_t *name) {
     for (int i = 0; i < count; i++)
         if (wcsncmp((const wchar_t *)(list + i * OIL_SIZE + OIL_NAME), name, 24) == 0) return list + i * OIL_SIZE;
     return NULL;
+}
+
+WORD *game_oc_flags2(const wchar_t *name) {
+    BYTE *app = read_ptr(base + RVA_APP), *oil = rh ? find_oil(name) : NULL;
+    if (!app || !oil || IsBadReadPtr(app + APP_OI_COUNT, 12)) return NULL;
+    int oi = *(short *)(oil + OIL_OI), count = *(int *)(app + APP_OI_COUNT);
+    WORD *index = (WORD *)read_ptr(app + APP_OI_INDEX);
+    BYTE *table = read_ptr(app + APP_OI_TABLE);
+    if (oi < 0 || oi >= count || count > 65536 || !index || !table || IsBadReadPtr(index + oi, 2)) return NULL;
+    BYTE *info = read_ptr(table + 4 * index[oi]);
+    if (!info || IsBadReadPtr(info, OI_COMMON + 4) || *(short *)(info + OI_TYPE) != OBJ_ACTIVE) return NULL;
+    BYTE *oc = read_ptr(info + OI_COMMON);
+    if (!oc || IsBadWritePtr(oc + OC_FLAGS2, 2)) return NULL;
+    return (WORD *)(oc + OC_FLAGS2);
 }
 
 bool frame_has(const wchar_t *name) { return rh && find_oil(name) != NULL; }
@@ -312,6 +335,18 @@ int *literal_in(BYTE *event, int size, int value) {
         if (memcmp(event + i, mark, sizeof mark) == 0 && *(int *)(event + i + 6) == value) return (int *)(event + i + 6);
     return NULL;
 }
+
+short *act_number(BYTE *group, const wchar_t *object, short number) {
+    BYTE *oil = rh ? find_oil(object) : NULL;
+    if (!group || !oil) return NULL;
+    for (int i = 0; i < group[3]; i++) {
+        BYTE *a = act_at(group, i);
+        if (*(short *)(a + EVENT_TYPE) == OBJ_ACTIVE && *(short *)(a + EVENT_NUM) == number && *(short *)(a + EVENT_OI) == *(short *)(oil + OIL_OI)) return (short *)(a + EVENT_NUM);
+    }
+    return NULL;
+}
+
+bool act_is(BYTE *act, short type, short number) { return act && *(short *)(act + EVENT_TYPE) == type && *(short *)(act + EVENT_NUM) == number; }
 
 bool cond_retarget(BYTE *cond, const wchar_t *counter) {
     BYTE *list = game_oi_list(), *oil = find_oil(counter);

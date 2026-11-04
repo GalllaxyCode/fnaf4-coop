@@ -312,6 +312,27 @@ Last updated 2026-11-04.
   first message, send results, session failures. Menu tests 12628 checks, 0 failures; disabling the invite
   button made 8 of them fail.
 
+- Jumpscares switch (0.5.5, 2026-11-04). Every night death creates a scare object and leaves for game over when
+  its animation ends: `jumpscare` (rules 200/201 and others, ends 203-206), `freddy bedroom attack` (288),
+  `cupcake attack` (300), `bonnie bedroom attack` (301), `fredbear scare` (370; 431 sends Nightmare to frame 15).
+  `foxy bite` (254) is Foxy's closet scare, not a death; 255 removes it. These six are used only in frame 3.
+  Rule 224 is "always" and shows `jumpscare` among others. Fusion's object actions: 24 destroy, 26 hide, 27 show.
+- Object creation reads "visible at start" from the object's common data: app+0x194 count, app+0x198 word index
+  by OI handle, app+0x19C table of object infos, info+2 type, info+0x14 common data, flags2 at +0x2A, bit 8
+  (code at 0x42b9b9 and 0x446a3a). Clearing it makes new instances hidden (sprite flags 3 against 22 seen).
+- With the switch off the mod clears that bit for the six objects, makes rule 224 hide `jumpscare` instead of
+  show it, turns off 431, and mutes scare sounds in frames 3 and 4. Hidden objects still animate and end.
+- Real game, two copies on one Mac, test scripts, host off and client on: forced kills 1, 4, 5, 6, 8, Nightmare
+  (shadow 1 then 8) on Night 5, and 7 on Night 3. Every one logged its object `appeared, hidden` on the host and
+  `shown` on the client, scream2 `silenced` on the host and `played` on the client, and reached frame 4 between
+  0.94 s and 1.02 s after the scream on both. In-process shots during the scare showed the room with no animatronic,
+  and shots after it the game over screen. Nightmare went to frame 4, not 15. Switching back on in the same night
+  restored frame 15 and distortion. Kill 7 doesn't fire on Night 5 with or without the switch (Fredbear AI 12, rule
+  432). A real click on the switch saved `jumpscares=0`. Not run: a natural death, Foxy's closet bite, the game
+  over sound with the switch off, Halloween edition, and the Windows build.
+- The panel's text is about 9 view pixels a glyph on screen, not 6. The 0.5.4 Steam status ran into the version;
+  moved and shortened, checked in a shot.
+
 ## Derived
 
 - FNAF 4 most likely draws through DirectDraw (Fusion's Standard mode), which is why the overlay never opens. From

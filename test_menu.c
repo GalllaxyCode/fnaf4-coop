@@ -209,8 +209,8 @@ static void test_settings_page(void) {
 
     Announce a = announce(1, "Alice");
     lobby_note(&l, &a, 1, 0);
-    menu_click(&m, &l, 500, 340, &act);
-    CHECK(act == ACTION_NONE && !m.dragging, "a room row worked under the page: %d", act);
+    menu_click(&m, &l, 500, 359, &act); /* inside the first room row, below the jumpscares switch */
+    CHECK(act == ACTION_NONE && !m.dragging && !m.jumpscares_off, "a room row worked under the page: %d", act);
     menu_click(&m, &l, 500, 195, &act);
     CHECK(m.focus == FOCUS_NONE, "name field focused under the page");
     menu_click(&m, &l, 576, 618, &act);
@@ -387,6 +387,39 @@ static void test_invite_page(void) {
     CHECK(!m.invite_open, "a client kept the host's invite page");
 }
 
+static void test_jumpscares_switch(void) {
+    Menu m;
+    Lobby l;
+    MenuAction act;
+    OverlayScene s;
+    lobby_clear(&l);
+    menu_init(&m, "x");
+    CHECK(!m.jumpscares_off, "jumpscares start off");
+    m.open = true;
+    memset(&s, 0, sizeof s);
+    menu_draw(&m, &l, 0, &s);
+    CHECK(!has_text(&s, "JUMPSCARES:"), "switch shown outside the settings page");
+    menu_click(&m, &l, 500, 336, &act);
+    CHECK(!m.jumpscares_off, "the switch worked outside the settings page");
+
+    menu_click(&m, &l, 576, 618, &act);
+    CHECK(m.settings_open, "settings page");
+    memset(&s, 0, sizeof s);
+    menu_draw(&m, &l, 0, &s);
+    CHECK(has_text(&s, "JUMPSCARES: ON"), "switch not shown on");
+    int texts = s.text_count;
+    menu_click(&m, &l, 500, 336, &act);
+    CHECK(m.jumpscares_off && act == ACTION_SETTINGS_CHANGED, "switch gave %d/%d", m.jumpscares_off, act);
+    memset(&s, 0, sizeof s);
+    menu_draw(&m, &l, 0, &s);
+    CHECK(has_text(&s, "JUMPSCARES: OFF") && s.text_count == texts, "switch not shown off, or text added: %d vs %d", s.text_count, texts);
+    CHECK(m.jumpscare_volume == 100 && !m.dragging, "the switch moved the slider");
+    menu_click(&m, &l, 500, 336, &act);
+    CHECK(!m.jumpscares_off && act == ACTION_SETTINGS_CHANGED, "switch did not turn back on");
+    menu_click(&m, &l, 500, 400, &act);
+    CHECK(act == ACTION_NONE && !m.jumpscares_off, "a click below the switch changed it");
+}
+
 static void test_steam_note_shows(void) {
     Menu m;
     Lobby l;
@@ -401,6 +434,7 @@ static void test_steam_note_shows(void) {
 }
 
 int main(void) {
+    test_jumpscares_switch();
     test_invite_page();
     test_steam_note_shows();
     test_sweep_starts_near_and_covers_the_network();
